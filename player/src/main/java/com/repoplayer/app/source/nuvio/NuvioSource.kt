@@ -62,7 +62,7 @@ object NuvioRepo {
     private fun cleanName(n: String) = n.trimStart('!', ' ').ifBlank { n }
 
     fun read(url: String, root: JsonNode): RepoEntry {
-        val name = root.str("name") ?: "Nuvio Repo"
+        val name = root.str("name") ?: if (root.isArray) url.substringBeforeLast('/').substringAfterLast('/').ifBlank { "Nuvio Repo" } + " (Nuvio)" else "Nuvio Repo"
         val scrapers = scrapers(url, root)
         val sources = mutableListOf<SourceEntry>()
         // Katalog eklentileri: her biri seçicide ayrı kaynak
@@ -166,7 +166,11 @@ internal fun emitStream(label: String, o: JsonNode, onLink: (StreamLink) -> Unit
     }
 }
 
-/** Eski tip Nuvio reposu: tüm sağlayıcılar TMDB kimliğiyle akış arar; içerik TMDB'den gelir */
+/**
+ * Eski tip Nuvio reposu: tüm sağlayıcılar TMDB kimliğiyle akış arar.
+ * TMDB anahtarı varsa içerik TMDB'den, yoksa anahtarsız Cinemeta'dan gelir
+ * (TMDB kimliği Cinemeta'nın moviedb_id alanından alınır).
+ */
 class NuvioSource(
     override val entry: SourceEntry,
     private val store: Store,
@@ -176,31 +180,55 @@ class NuvioSource(
 
     suspend fun scrapers(): List<NuvioScraper> = code.scrapers()
 
-    private fun tmdb(): Tmdb {
-        val key = store.tmdbKey
-        if (key.isBlank()) throw IllegalStateException(TMDB_REQUIRED)
-        return Tmdb(key, store.language, store.imageQuality)
-    }
+    private val tmdb: Tmdb? get() = store.tmdbKey.takeIf { it.isNotBlank() }?.let { Tmdb(it, store.language, store.imageQuality) }
 
     override fun home(): Flow<Row> = channelFlow {
-        val t = tmdb()
-        t.homeLists.forEachIndexed { i, (title, path, type) ->
-            launch(Dispatchers.IO) {
-                runCatching { t.list(entry.key, path, type, 1) }
-                    .onSuccess { if (it.isNotEmpty()) send(Row(title, it, "$path|$type", order = i)) }
-                    .onFailure { Logger.e("Nuvio", "TMDB listesi alınamadı", it) }
+        val t = tmdb
+        if (t != null) {
+            t.homeLists.forEachIndexed { i, (title, path, type) ->
+                launch(Dispatchers.IO) {
+                    runCatching { t.list(entry.key, path, type, 1) }
+                        .onSuccess { if (it.isNotEmpty()) send(Row(title, it, "$path|$type", order = i)) }
+                        .onFailure { Logger.e("Nuvio", "TMDB listesi alınamadı", it) }
+                }
+            }
+        } else {
+            Cinemeta.homeLists.forEachIndexed { i, (title, type, catalog) ->
+                launch(Dispatchers.IO) {
+                    runCatching { Cinemeta.catalog(entry.key, type, catalog, 0) }
+                        .onSuccess { if (it.isNotEmpty()) send(Row(title, it, "cm|$type|$catalog", order = i)) }
+                        .onFailure { Logger.e("Nuvio", "Cinemeta listesi alınamadı", it) }
+                }
             }
         }
     }
 
     override suspend fun rowPage(row: Row, page: Int): List<ContentItem> {
-        val (path, type) = row.moreKey?.split("|")?.let { it[0] to it[1] } ?: return emptyList()
-        return tmdb().list(entry.key, path, type, page)
+        val parts = row.moreKey?.split("|") ?: return emptyList()
+        if (parts[0] == "cm") return Cinemeta.catalog(entry.key, parts[1], parts[2], (page - 1) * 100)
+        return tmdb?.list(entry.key, parts[0], parts[1], page) ?: emptyList()
     }
 
-    override suspend fun search(query: String): List<ContentItem> = tmdb().search(entry.key, query)
+    override suspend fun search(query: String): List<ContentItem> =
+        tmdb?.search(entry.key, query) ?: Cinemeta.search(entry.key, query)
 
-    override suspend fun details(item: ContentItem): Details = tmdb().details(item)
+    override suspend fun details(item: ContentItem): Details {
+        if (item.id.startsWith("cm:")) {
+            val (_, type, imdb) = item.id.split(":", limit = 3)
+            return Cinemeta.details(item, imdb, type == "series")
+        }
+        return (tmdb ?: throw IllegalStateException(TMDB_REQUIRED)).details(item)
+    }
+
+    /** İçerik kimliğinden (type, tmdbId) üretir */
+    private suspend fun streamIds(item: ContentItem): Pair<String, String> {
+        if (item.id.startsWith("cm:")) {
+            val (_, type, imdb) = item.id.split(":", limit = 3)
+            val tmdbId = Cinemeta.tmdbId(type, imdb)
+            return (if (type == "series") "tv" else "movie") to (tmdbId ?: imdb)
+        }
+        return item.id.split(":").let { it[0] to it[1] }
+    }
 
     override suspend fun links(
         details: Details,
@@ -208,9 +236,10 @@ class NuvioSource(
         onLink: (StreamLink) -> Unit,
         onSubtitle: (Subtitle) -> Unit,
     ) {
-        val (type, tmdbId) = details.item.id.split(":").let { it[0] to it[1] }
+        val (type, tmdbId) = streamIds(details.item)
         val disabled = store.disabledScrapers
         val list = scrapers().filter { it.enabled && it.id !in disabled && (type in it.types || (type == "tv" && "series" in it.types)) }
+        if (list.isEmpty()) Logger.w("Nuvio", "${entry.name}: bu tür ($type) için etkin sağlayıcı yok")
         val gate = Semaphore(store.parallelRequests.coerceIn(1, 12))
         coroutineScope {
             list.forEach { s ->

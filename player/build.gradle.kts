@@ -103,6 +103,8 @@ dependencies {
     implementation(libs.media3.ui)
     implementation(libs.media3.common)
     implementation(libs.media3.datasource.okhttp)
+    implementation(libs.media3.datasource.cronet)
+    implementation(libs.conscrypt.android)
 
     implementation(libs.jackson.module.kotlin)
     implementation(libs.kotlinx.coroutines.core)

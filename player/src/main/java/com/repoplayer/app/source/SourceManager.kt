@@ -49,6 +49,8 @@ class SourceManager(private val context: Context, val store: Store) {
             root.has("pluginLists") -> Cs3Repo.read(url, root)
             root.isArray && root.firstOrNull()?.has("internalName") == true -> Cs3Repo.read(url, root)
             root.has("scrapers") || root.has("providers") -> NuvioRepo.read(url, root)
+            // Nuvio'nun güncel biçimi: manifest doğrudan sağlayıcı dizisi
+            root.isArray && root.firstOrNull()?.has("filename") == true -> NuvioRepo.read(url, root)
             StremioRepo.isAddon(root) -> StremioRepo.read(url, root)
             else -> throw IllegalArgumentException("Tanınmayan format: repo.json veya manifest.json bekleniyordu")
         }

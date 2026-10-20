@@ -139,6 +139,55 @@ object OpenSubs {
 /** Cinemeta (Stremio) — anahtarsız film/dizi bilgisi ve bölüm listesi */
 object Cinemeta {
     private const val BASE = "https://v3-cinemeta.strem.io"
+    private val tmdbCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** Ana sayfa: başlık, tür, katalog */
+    val homeLists = listOf(
+        Triple("Popüler Filmler", "movie", "top"),
+        Triple("Popüler Diziler", "series", "top"),
+        Triple("En Yüksek Puanlı Filmler", "movie", "imdbRating"),
+        Triple("En Yüksek Puanlı Diziler", "series", "imdbRating"),
+    )
+
+    private fun toItem(sourceKey: String, m: JsonNode, type: String): ContentItem? {
+        val imdb = m.str("imdb_id") ?: m.str("id") ?: return null
+        if (!imdb.startsWith("tt")) return null
+        m.get("moviedb_id")?.asText()?.takeIf { it.isNotBlank() && it != "null" }?.let { tmdbCache["$type:$imdb"] = it }
+        return ContentItem(
+            sourceKey = sourceKey,
+            id = "cm:$type:$imdb",
+            title = m.str("name") ?: return null,
+            poster = m.str("poster"),
+            kind = if (type == "series") Kind.SERIES else Kind.MOVIE,
+            year = m.str("releaseInfo")?.take(4)?.toIntOrNull(),
+        )
+    }
+
+    suspend fun catalog(sourceKey: String, type: String, catalog: String, skip: Int): List<ContentItem> {
+        val extra = if (skip > 0) "/skip=$skip" else ""
+        return Net.jsonTree("$BASE/catalog/$type/$catalog$extra.json").get("metas")
+            ?.mapNotNull { toItem(sourceKey, it, type) } ?: emptyList()
+    }
+
+    suspend fun search(sourceKey: String, query: String): List<ContentItem> = coroutineScope {
+        listOf("movie", "series").map { type ->
+            async {
+                runCatching {
+                    Net.jsonTree("$BASE/catalog/$type/top/search=${enc(query)}.json").get("metas")
+                        ?.mapNotNull { toItem(sourceKey, it, type) } ?: emptyList()
+                }.getOrDefault(emptyList())
+            }
+        }.awaitAll().flatten()
+    }
+
+    /** IMDb kimliğinden TMDB kimliği (Cinemeta'nın moviedb_id alanı) */
+    suspend fun tmdbId(type: String, imdb: String): String? {
+        tmdbCache["$type:$imdb"]?.let { return it }
+        return runCatching {
+            Net.jsonTree("$BASE/meta/$type/$imdb.json").get("meta")?.get("moviedb_id")?.asText()
+                ?.takeIf { it.isNotBlank() && it != "null" }
+        }.getOrNull()?.also { tmdbCache["$type:$imdb"] = it }
+    }
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
@@ -162,6 +211,7 @@ object Cinemeta {
     suspend fun details(item: ContentItem, imdb: String, series: Boolean): Details {
         val type = if (series) "series" else "movie"
         val m = Net.jsonTree("$BASE/meta/$type/$imdb.json").get("meta") ?: throw IllegalStateException("Cinemeta: kayıt yok")
+        m.get("moviedb_id")?.asText()?.takeIf { it.isNotBlank() && it != "null" }?.let { tmdbCache["$type:$imdb"] = it }
         val episodes = m.get("videos")?.mapNotNull { v ->
             val s = v.int("season") ?: return@mapNotNull null
             val e = v.int("episode") ?: v.int("number") ?: return@mapNotNull null

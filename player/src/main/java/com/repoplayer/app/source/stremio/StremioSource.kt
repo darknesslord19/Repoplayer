@@ -105,6 +105,9 @@ class StremioSource(override val entry: SourceEntry) : ContentSource {
     override fun home(): Flow<Row> = channelFlow {
         manifest().get("catalogs")?.forEachIndexed { i, c ->
             if (c.requiresExtra()) return@forEachIndexed
+            // Yalnızca arama için tanımlanmış kataloglar (ör. "sw-search-movie") ana sayfada boş satır üretir
+            val isSearchCatalog = c.get("extra")?.any { it.str("name") == "search" } == true && (c.str("id") ?: "").contains("search", true)
+            if (isSearchCatalog) return@forEachIndexed
             val type = c.str("type") ?: return@forEachIndexed
             val id = c.str("id") ?: return@forEachIndexed
             val title = c.str("name")?.let { "$it" + if (type == "series") " · Dizi" else if (type == "movie") " · Film" else "" } ?: id

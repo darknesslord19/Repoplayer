@@ -206,6 +206,7 @@ class AppViewModel : ViewModel() {
                     homeFromCache = false
                 }
                 if (fresh.isNotEmpty()) HomeCache.put(entry.key, fresh)
+                preloadSiblings(entry)
                 else if (rows.isEmpty()) homeError = "Bu kaynağın ana sayfası yok veya boş döndü.\nAra sekmesinden arama yapabilirsiniz."
             } catch (e: CancellationException) {
                 throw e
@@ -216,6 +217,26 @@ class AppViewModel : ViewModel() {
             } finally {
                 homeLoading = false
             }
+        }
+    }
+
+    private var preloaded = false
+
+    /**
+     * Hız: seçili kaynakla aynı repodaki diğer CS3 eklentilerini arka planda sırayla
+     * indirip yükler; kaynak değiştirince ana sayfa beklemeden açılır.
+     */
+    private fun preloadSiblings(current: SourceEntry) {
+        if (preloaded) return
+        preloaded = true
+        viewModelScope.launch(Dispatchers.IO) {
+            delay(3000)
+            visibleEntries.filter { it.type == RepoType.CS3 && it.repoUrl == current.repoUrl && it.key != current.key }
+                .take(20)
+                .forEach { e ->
+                    runCatching { sources.open(e) }
+                    delay(400)
+                }
         }
     }
 

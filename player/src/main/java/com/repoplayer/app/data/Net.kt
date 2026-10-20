@@ -87,6 +87,7 @@ object Net {
             .followRedirects(true)
             .followSslRedirects(true)
             .retryOnConnectionFailure(true)
+            .cookieJar(WebViewCookieJar)
             .applyDns()
             .apply {
                 val dir = cacheDir
@@ -113,13 +114,32 @@ object Net {
             .build()
     }
 
-    /** Afiş yükleyici: CloudStream'in kullandığı tarayıcı kimliğini ekler */
+    /**
+     * Afiş yükleyici: CloudStream'in tarayıcı kimliğini ekler; sunucu 401/403 ya da
+     * resim yerine HTML dönerse (hotlink/Cloudflare koruması) sitenin kendi adresini
+     * Referer yapıp bir kez daha dener.
+     */
     val imageClient: OkHttpClient by lazy {
         val ua = runCatching { com.lagradost.cloudstream3.USER_AGENT }.getOrDefault(DEFAULT_UA)
+        var logged = 0
         client.newBuilder()
             .addInterceptor { chain ->
-                val r = chain.request()
-                chain.proceed(if (r.header("User-Agent") == null) r.newBuilder().header("User-Agent", ua).build() else r)
+                var req = chain.request()
+                if (req.header("User-Agent") == null) req = req.newBuilder().header("User-Agent", ua).build()
+                val first = chain.proceed(req)
+                val type = first.header("Content-Type")?.lowercase() ?: ""
+                val blocked = first.code == 401 || first.code == 403 || (first.isSuccessful && type.startsWith("text/html"))
+                if (!blocked) return@addInterceptor first
+                first.close()
+                val origin = "${req.url.scheme}://${req.url.host}/"
+                val retry = req.newBuilder()
+                    .header("Referer", req.header("Referer") ?: origin)
+                    .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                    .header("Sec-Fetch-Dest", "image")
+                    .build()
+                val second = chain.proceed(retry)
+                if (!second.isSuccessful && logged++ < 40) Logger.w("Görsel", "${second.code} ${req.url}")
+                second
             }
             .build()
     }
@@ -211,3 +231,26 @@ fun JsonNode?.str(field: String): String? =
 
 fun JsonNode?.int(field: String): Int? =
     this?.get(field)?.takeIf { it.isNumber || (it.isTextual && it.asText().toIntOrNull() != null) }?.asInt()
+
+
+/**
+ * OkHttp ile WebView çerezlerini paylaşır. Eklentiler Cloudflare doğrulamasını
+ * WebViewResolver ile (gizli tarayıcıda) geçtiğinde alınan çerezler, sonraki
+ * sayfa/afiş/video isteklerinde de otomatik gönderilir.
+ */
+object WebViewCookieJar : okhttp3.CookieJar {
+    private val manager: android.webkit.CookieManager? by lazy {
+        runCatching { android.webkit.CookieManager.getInstance().apply { setAcceptCookie(true) } }.getOrNull()
+    }
+
+    override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<okhttp3.Cookie>) {
+        val m = manager ?: return
+        runCatching { cookies.forEach { m.setCookie(url.toString(), it.toString()) } }
+    }
+
+    override fun loadForRequest(url: okhttp3.HttpUrl): List<okhttp3.Cookie> {
+        val m = manager ?: return emptyList()
+        val raw = runCatching { m.getCookie(url.toString()) }.getOrNull() ?: return emptyList()
+        return raw.split(";").mapNotNull { okhttp3.Cookie.parse(url, it.trim()) }
+    }
+}

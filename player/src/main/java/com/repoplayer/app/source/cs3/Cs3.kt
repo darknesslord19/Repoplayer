@@ -380,6 +380,9 @@ class Cs3Source(override val entry: SourceEntry, private val apis: List<MainAPI>
                     }
                     if (type == null) Logger.w(TAG, "Desteklenmeyen bağlantı türü (${link.type.name}): ${link.name}")
                     if (type != null) {
+                        runCatching { api.getVideoInterceptor(link) }.getOrNull()?.let {
+                            com.repoplayer.app.player.VideoInterceptors.register(link.url, it)
+                        }
                         count++
                         onLink(
                             StreamLink(

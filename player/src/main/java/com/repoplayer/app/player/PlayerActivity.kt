@@ -507,34 +507,58 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    /** Bir bağlantı için tek bir açma denemesi: hangi ağ motoru, hangi başlıklar */
+    private data class Attempt(val cronet: Boolean, val headers: Map<String, String>, val label: String)
+
     /**
-     * Bazı sunucular eklentinin verdiği başlıklarla (özellikle User-Agent) 403/404 döner.
-     * Sırayla: tam başlıklar → User-Agent'sız → başlıksız.
+     * CloudStream oynatıcısıyla aynı sıra: önce Cronet (Chrome ağ motoru, HTTP/3, Chrome TLS
+     * parmak izi; bazı CDN'ler yalnızca bunu kabul eder), olmazsa OkHttp (DNS-over-HTTPS +
+     * WebView çerezleri), sonra başlık varyasyonları (UA'sız / başlıksız).
+     * Eklentinin video yakalayıcısı varsa CloudStream gibi doğrudan OkHttp + yakalayıcı.
      */
-    private fun headerVariants(h: Map<String, String>): List<Map<String, String>> {
-        val list = mutableListOf(h)
+    private fun attempts(link: com.repoplayer.app.data.StreamLink): List<Attempt> {
+        val h = link.headers
+        val list = mutableListOf<Attempt>()
+        if (cronetEngine(this) != null && VideoInterceptors.get(link.url) == null) list += Attempt(true, h, "Cronet")
+        list += Attempt(false, h, "OkHttp")
         val noUa = h.filterKeys { !it.equals("user-agent", true) }
-        if (noUa.size != h.size) list += noUa
-        if (h.isNotEmpty() && noUa.isNotEmpty()) list += emptyMap()
+        if (noUa.size != h.size) list += Attempt(false, noUa, "OkHttp, UA'sız")
+        if (h.isNotEmpty() && noUa.isNotEmpty()) list += Attempt(false, emptyMap(), "OkHttp, başlıksız")
         return list
+    }
+
+    private fun headerVariants(h: Map<String, String>) = attempts(req.links[index].copy(headers = h))
+
+    private fun dataSourceFactory(link: com.repoplayer.app.data.StreamLink, a: Attempt): androidx.media3.datasource.HttpDataSource.Factory {
+        val ua = a.headers.entries.firstOrNull { it.key.equals("user-agent", true) }?.value
+            ?: runCatching { com.lagradost.cloudstream3.USER_AGENT }.getOrDefault(DEFAULT_UA)
+        val headers = a.headers.filterKeys { !it.equals("user-agent", true) }
+        val engine = if (a.cronet) cronetEngine(this) else null
+        if (engine != null) {
+            return androidx.media3.datasource.cronet.CronetDataSource.Factory(engine, cronetExecutor)
+                .setUserAgent(ua)
+                .setConnectionTimeoutMs(20_000)
+                .setReadTimeoutMs(30_000)
+                .setResetTimeoutOnRedirects(true)
+                .setHandleSetCookieRequests(true)
+                .setDefaultRequestProperties(headers)
+        }
+        val interceptor = VideoInterceptors.get(link.url)
+        val client = if (interceptor != null) Net.client.newBuilder().addInterceptor(interceptor).build() else Net.client
+        return OkHttpDataSource.Factory(client).setUserAgent(ua).setDefaultRequestProperties(headers)
     }
 
     private fun load(i: Int, position: Long, selectFirstSub: Boolean = false) {
         val p = player ?: return
         val original = req.links[i]
-        val variants = headerVariants(original.headers)
-        val link = original.copy(headers = variants[attempt.coerceIn(0, variants.lastIndex)])
+        val tries = attempts(original)
+        val a = tries[attempt.coerceIn(0, tries.lastIndex)]
+        val link = original.copy(headers = a.headers)
         titleView.text = req.title
         infoView.text = listOfNotNull(link.quality, link.name, "${i + 1}/${req.links.size}").joinToString(" · ")
         nextDismissed = false
 
-        val ua = link.headers.entries.firstOrNull { it.key.equals("user-agent", true) }?.value
-            ?: runCatching { com.lagradost.cloudstream3.USER_AGENT }.getOrDefault(DEFAULT_UA)
-        // Ortak OkHttp istemcisi: bağlantı havuzu ve HTTP/2 ile daha hızlı açılış
-        val http = OkHttpDataSource.Factory(Net.client)
-            .setUserAgent(ua)
-            .setDefaultRequestProperties(link.headers.filterKeys { !it.equals("user-agent", true) })
-        val factory = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http))
+        val factory = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, dataSourceFactory(original, a)))
 
         val subs = (localSubs + req.subtitles).distinctBy { it.url }
         val firstTr = subs.indexOfFirst { langCode(it.lang) == "tr" }
@@ -579,7 +603,7 @@ class PlayerActivity : ComponentActivity() {
         // Önce aynı bağlantıyı farklı başlıklarla dene
         if (attempt < headerVariants(req.links[index].headers).lastIndex) {
             attempt++
-            Logger.i("Player", "Aynı kaynak farklı başlıklarla deneniyor (${attempt + 1})")
+            Logger.i("Player", "Aynı kaynak yeniden deneniyor: ${attempts(req.links[index]).getOrNull(attempt)?.label}")
             load(index, pos)
             return
         }
@@ -709,5 +733,29 @@ class PlayerActivity : ComponentActivity() {
         player?.release()
         player = null
         super.onDestroy()
+    }
+
+    companion object {
+        private val cronetExecutor = java.util.concurrent.Executors.newFixedThreadPool(4)
+        @Volatile private var engine: org.chromium.net.CronetEngine? = null
+        @Volatile private var engineTried = false
+
+        /** Google Play Hizmetleri'nin Cronet'i; yoksa (bazı TV'ler) null döner ve OkHttp kullanılır */
+        fun cronetEngine(context: Context): org.chromium.net.CronetEngine? {
+            engine?.let { return it }
+            if (engineTried) return null
+            synchronized(this) {
+                if (engineTried) return engine
+                engineTried = true
+                engine = runCatching {
+                    org.chromium.net.CronetEngine.Builder(context.applicationContext)
+                        .enableHttp2(true)
+                        .enableQuic(true)
+                        .enableBrotli(true)
+                        .build()
+                }.onFailure { Logger.w("Player", "Cronet yok, OkHttp kullanılacak: ${it.message}") }.getOrNull()
+                return engine
+            }
+        }
     }
 }
