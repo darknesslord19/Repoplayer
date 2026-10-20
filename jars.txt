@@ -1,0 +1,14 @@
+total 1076
+drwxr-xr-x  2 runner runner   4096 Oct 20 20:21 .
+drwxr-xr-x 16 runner runner   4096 Oct 20 20:22 ..
+-rw-r--r--  1 runner runner  74666 Oct 20 20:21 DiziBox.jar
+-rw-r--r--  1 runner runner  64786 Oct 20 20:21 DiziYou.jar
+-rw-r--r--  1 runner runner  94237 Oct 20 20:21 Dizilla.jar
+-rw-r--r--  1 runner runner 114089 Oct 20 20:21 Dizipal.jar
+-rw-r--r--  1 runner runner 103446 Oct 20 20:21 FilmMakinesi.jar
+-rw-r--r--  1 runner runner  99902 Oct 20 20:21 FullHDFilmizlesene.jar
+-rw-r--r--  1 runner runner 128471 Oct 20 20:21 HDFilmCehennemi.jar
+-rw-r--r--  1 runner runner 108888 Oct 20 20:21 SelcukFlix.jar
+-rw-r--r--  1 runner runner  92383 Oct 20 20:21 SetFilm.jar
+-rw-r--r--  1 runner runner 105696 Oct 20 20:21 WebDramaTurkey.jar
+-rw-r--r--  1 runner runner  82951 Oct 20 20:21 YesilcamTV.jar

@@ -1,0 +1,189 @@
+Starting a Gradle Daemon (subsequent builds will be faster)
+
+> Configure project :app
+No prerelease signing config!
+
+> Configure project :shared
+w: ⚠️ Unused Kotlin Source Sets
+The Kotlin source set appleMain was configured but not added to any Kotlin compilation.
+Solution: You can add a source set to a target's compilation by connecting it with the compilation's default source set using 'dependsOn'.
+See https://kotl.in/connecting-source-sets
+
+
+> Task :diag:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :library:kmpPartiallyResolvedDependenciesChecker
+> Task :library:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :library:generateBuildKonfig FROM-CACHE
+> Task :library:compileKotlinJvm FROM-CACHE
+> Task :library:compileJvmMainJava NO-SOURCE
+> Task :library:jvmProcessResources NO-SOURCE
+> Task :library:processJvmMainResources SKIPPED
+> Task :library:jvmMainClasses UP-TO-DATE
+> Task :library:jvmJar
+> Task :diag:compileKotlin FROM-CACHE
+> Task :diag:compileJava NO-SOURCE
+> Task :diag:processResources NO-SOURCE
+> Task :diag:classes UP-TO-DATE
+
+> Task :diag:run
+# CS3 eklenti teşhis raporu
+Çalıştırma: GitHub Actions (ABD) · 2026-10-20T20:22:34.486083317Z
+
+## DiziBox
+INFO PluginInstance: Adding !DiziBox (https://www.dizibox.live) MainAPI
+- yüklendi: !DiziBox
+### !DiziBox  (https://www.dizibox.live) · ana sayfa=true
+    [log/Manitux_Domains] domains.json yüklendi count=11
+- getMainPage HATA: NotImplementedError: An operation is not implemented: Not yet implemented @ WebViewResolver.resolveUsingWebView
+- search HATA: NotImplementedError: An operation is not implemented: Not yet implemented @ WebViewResolver.resolveUsingWebView
+- search("a"): 0 sonuç
+
+## DiziYou
+INFO PluginInstance: Adding !DiziYou (https://www.diziyou.one) MainAPI
+- yüklendi: !DiziYou
+### !DiziYou  (https://www.diziyou.one) · ana sayfa=true
+    [log/Manitux_Domains] domains.json yüklendi count=11
+- getMainPage("Dizi Arşivi"): 1 liste, 0 öğe · 261 ms
+- search("a"): 0 sonuç
+
+## Dizilla
+INFO PluginInstance: Adding !Dizilla (https://dizilla.now) MainAPI
+- yüklendi: !Dizilla
+### !Dizilla  (https://dizilla.now) · ana sayfa=true
+    [log/Manitux_Domains] domains.json yüklendi count=11
+- getMainPage HATA: ErrorLoadingException: Dizilla yanıtı alınamadı (HTTP 403) @ DizillaProvider.request
+- search HATA: ErrorLoadingException: Dizilla yanıtı alınamadı (HTTP 403) @ DizillaProvider.request
+- search("a"): 0 sonuç
+
+## Dizipal
+INFO PluginInstance: Adding !Dizipal (https://dizipal2134.com) MainAPI
+- yüklendi: !Dizipal
+### !Dizipal  (https://dizipal2134.com) · ana sayfa=true
+    [log/Manitux_Domains] domains.json yüklendi count=11
+- getMainPage("Yeni Diziler"): 1 liste, 0 öğe · 295 ms
+    [log/Manitux_Dizipal] search hatası » Unexpected character ('<' (code 60)): expected a valid value (JSON String, Number, Array, Object or token 'null', 'true' or 'false')
+ at [Source: (String)"<!DOCTYPE html>
+<!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]-->
+<!--[if IE 7]>    <html class="no-js ie7 oldie" lang="en-US"> <![endif]-->
+<!--[if IE 8]>    <html class="no-js ie8 oldie" lang="en-US"> <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en-US"> <!--<![endif]-->
+<head>
+<title>Attention Required! | Cloudflare</title>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta http-equiv="X-UA-Compatible" "[truncated 4417 chars]; line: 1, column: 2]
+- search("a"): 0 sonuç
+
+## FilmMakinesi
+INFO PluginInstance: Adding !FilmMakinesi (https://filmmakinesi.to) MainAPI
+INFO PluginInstance: Adding CloseLoad (https://closeload.filmmakinesi.to) ExtractorApi
+INFO PluginInstance: Adding Rapidrame (https://rapid.filmmakinesi.to) ExtractorApi
+- yüklendi: !FilmMakinesi
+### !FilmMakinesi  (https://filmmakinesi.to) · ana sayfa=true
+    [log/Manitux_Domains] domains.json yüklendi count=11
+- getMainPage("Son Filmler"): 1 liste, 0 öğe · 203 ms
+- search("a"): 0 sonuç
+
+## FullHDFilmizlesene
+INFO PluginInstance: Adding !FullHDFilmizlesene (https://www.fullhdfilmizlesene.now) MainAPI
+INFO PluginInstance: Adding TurboImgz (https://turbo.imgz.me) ExtractorApi
+- yüklendi: !FullHDFilmizlesene
+### !FullHDFilmizlesene  (https://www.fullhdfilmizlesene.now) · ana sayfa=true
+    [log/Manitux_Domains] domains.json yüklendi count=11
+    [log/Manitux_FullHD] HTTP code=403 challenge=true url=https://www.fullhdfilmizlesene.now/
+- getMainPage HATA: NotImplementedError: An operation is not implemented: Not yet implemented @ WebViewResolver.resolveUsingWebView
+    [log/Manitux_FullHD] HTTP code=403 challenge=true url=https://www.fullhdfilmizlesene.now/arama/a
+- search HATA: NotImplementedError: An operation is not implemented: Not yet implemented @ WebViewResolver.resolveUsingWebView
+- search("a"): 0 sonuç
+
+## HDFilmCehennemi
+INFO PluginInstance: Adding !HDFilmCehennemi (https://www.hdfilmcehennemi.nl) MainAPI
+INFO PluginInstance: Adding CloseLoad (https://hdfilmcehennemi.mobi) ExtractorApi
+INFO PluginInstance: Adding Rapidrame (https://www.hdfilmcehennemi.nl) ExtractorApi
+- yüklendi: !HDFilmCehennemi
+### !HDFilmCehennemi  (https://www.hdfilmcehennemi.nl) · ana sayfa=true
+    [log/Manitux_Domains] domains.json yüklendi count=11
+    [log/Manitux_HDFC] HTTP code=451 challenge=false ms=274 url=https://www.hdfilmcehennemi.nl/load/page/1/home/
+    [log/Manitux_HDFC] shelf path=home page=1 count=0
+- getMainPage("Bugün Ne İzlesem?"): 1 liste, 0 öğe · 309 ms
+    [log/Manitux_HDFC] HTTP code=451 challenge=false ms=92 url=https://www.hdfilmcehennemi.nl/search?q=a
+- search("a"): 0 sonuç
+
+## SelcukFlix
+INFO PluginInstance: Adding !SelcukFlix (https://selcukflix.com) MainAPI
+- yüklendi: !SelcukFlix
+### !SelcukFlix  (https://selcukflix.com) · ana sayfa=true
+    [log/Manitux_Domains] domains.json yüklendi count=11
+- getMainPage HATA: ErrorLoadingException: SelcukFlix/kaynak yanıtı: 403. Site doğrulaması gerekiyorsa yeniden deneyin. @ SelcukFlixProvider.request
+- search HATA: ErrorLoadingException: SelcukFlix/kaynak yanıtı: 403. Site doğrulaması gerekiyorsa yeniden deneyin. @ SelcukFlixProvider.request
+- search("a"): 0 sonuç
+
+## SetFilm
+INFO PluginInstance: Adding !SetFilm (https://www.setfilmizle.ltd) MainAPI
+- yüklendi: !SetFilm
+### !SetFilm  (https://www.setfilmizle.ltd) · ana sayfa=true
+    [log/Manitux_Domains] domains.json yüklendi count=11
+    [log/Manitux_SetFilm] raf=Filmler page=1 cards=24
+- getMainPage("Filmler"): 1 liste, 24 öğe · 1170 ms
+- Afiş denemesi:
+  - Doğaüstü → `https://www.setfilmizle.ltd/wp-content/uploads/2026/10/chronicle-2012-izle.webp`
+      başlıksız: 206 image/webp [webp] · Referer: 206 image/webp [webp]
+  - Hitchcock → `https://www.setfilmizle.ltd/wp-content/uploads/2026/10/hitchcock-2012-izle.webp`
+      başlıksız: 206 image/webp [webp] · Referer: 206 image/webp [webp]
+  - Ağzımdan Kaçtı → `https://www.setfilmizle.ltd/wp-content/uploads/2025/12/i-swear-2025-izle.webp`
+      başlıksız: 206 image/webp [webp] · Referer: 206 image/webp [webp]
+- load("Doğaüstü") `https://www.setfilmizle.ltd/film/dogaustu-2012-izle/`
+    [log/Manitux_SetFilm] title=Doğaüstü episodes=0 backdrop=false logo=false plot=true year=2012 tags=[Bilim-Kurgu, Dram, Gerilim] score=7 recommendations=6 trailer=site duration=84
+  tür=MovieLoadResponse · afiş=`https://www.setfilmizle.ltd/wp-content/uploads/2026/10/chronicle-2012-…` · posterHeaders=null
+    [log/Manitux_SetFilmPlayer] manifest host=fastplay.mom code=200 hls=true
+  loadLinks=true · 1 bağlantı, 4 altyazı · 2255 ms
+  - **SetFilm - fastplay.mom** · M3U8 · q=400 · `https://fastplay.mom/manifests/aM4IGegzwasd/master.txt?verify=1792519200-%2FAYVJvQyXQYbdpE…`
+      başlıklar=[User-Agent, Referer] · başlıklı: 404 application/octet-stream [] · başlıksız: 200 application/vnd.apple.mpegurl; charset=utf-8 [m3u8]
+
+## WebDramaTurkey
+INFO PluginInstance: Adding !WebDramaTurkey (https://webdramaturkey2.com) MainAPI
+- yüklendi: !WebDramaTurkey
+### !WebDramaTurkey  (https://webdramaturkey2.com) · ana sayfa=true
+    [log/Manitux_Domains] domains.json yüklendi count=11
+- getMainPage("Diziler"): 1 liste, 20 öğe · 678 ms
+- Afiş denemesi:
+  - Extraordinary Attorney Minami → `https://cdn.webdrama.io/cover/extraordinary-attorney-minami-vtn1egt8976.jpeg`
+      başlıksız: 403 text/html; charset=UTF-8 [HTML!] · Referer: 403 text/html; charset=UTF-8 [HTML!]
+  - Gift → `https://cdn.webdrama.io/cover/gift-vtn1e7g1fdb.jpeg`
+      başlıksız: 403 text/html; charset=UTF-8 [HTML!] · Referer: 403 text/html; charset=UTF-8 [HTML!]
+  - Miracles of the ER → `https://cdn.webdrama.io/cover/miracles-of-the-er-vtn1dts4c89.jpeg`
+      başlıksız: 403 text/html; charset=UTF-8 [HTML!] · Referer: 403 text/html; charset=UTF-8 [HTML!]
+- load("Extraordinary Attorney Minami") `https://webdramaturkey2.com/dizi/extraordinary-attorney-minami`
+    [log/Manitux_WebDramaTurkey] title=Extraordinary Attorney Minami type=TvSeries year=2026 backdrop=false logo=false plot=true tags=2 recommendations=6 duration=null trailer=false episodes=1
+  dizi: 1 bölüm
+  tür=TvSeriesLoadResponse · afiş=`https://cdn.webdrama.io/cover/extraordinary-attorney-minami-vtn1egt897…` · posterHeaders=null
+  loadLinks=true · 2 bağlantı, 0 altyazı · 3046 ms
+  - **!WebDramaTurkey - WDT** · M3U8 · q=400 · `https://dtpasn.asia/cdn/hls/a796045557f268b26764d131267df235/master.m3u8?md5=WDXnSarB2G3hj…`
+      başlıklar=[referer] · başlıklı: 200 application/x-mpegURL [m3u8] · başlıksız: 200 application/x-mpegURL [m3u8]
+  - **!WebDramaTurkey - WDT** · M3U8 · q=400 · `https://dtpasn.asia/cdn/hls/a796045557f268b26764d131267df235/master.txt`
+      başlıklar=[referer] · başlıklı: 200 text/html; charset=UTF-8 [security err] · başlıksız: 200 text/html; charset=UTF-8 [security err]
+
+## YesilcamTV
+INFO PluginInstance: Adding !YesilcamTV (https://yesilcamtv.com.tr) MainAPI
+- yüklendi: !YesilcamTV
+### !YesilcamTV  (https://yesilcamtv.com.tr) · ana sayfa=true
+    [log/Manitux_Domains] domains.json yüklendi count=11
+- getMainPage("Aile"): 1 liste, 20 öğe · 1162 ms
+- Afiş denemesi:
+  - Gelinlik Kızlar → `https://yesilcamtv.com.tr/wp-content/uploads/2025/01/gelinlik-kizlar-180x270.jpg`
+      başlıksız: 206 image/jpeg [jpg] · Referer: 206 image/jpeg [jpg] · posterHeaders[User-Agent, Referer]: 206 image/jpeg [jpg]
+  - Ayşecik Yuvanın Bekçileri → `https://yesilcamtv.com.tr/wp-content/uploads/2026/01/aysecik-yuvanin-bekcileri-180x270.jpg`
+      başlıksız: 206 image/jpeg [jpg] · Referer: 206 image/jpeg [jpg] · posterHeaders[User-Agent, Referer]: 206 image/jpeg [jpg]
+  - Biçaklar fora → `https://yesilcamtv.com.tr/wp-content/uploads/2025/02/MV5BMTQ5YjQ4YjMtODI0NS00NTg3LTg5ZTItM…`
+      başlıksız: 206 image/jpeg [jpg] · Referer: 206 image/jpeg [jpg] · posterHeaders[User-Agent, Referer]: 206 image/jpeg [jpg]
+- load("Gelinlik Kızlar") `https://yesilcamtv.com.tr/gelinlik-kizlar-izle/`
+  load HATA: NoSuchMethodError: 'int android.util.Log.w(java.lang.String, java.lang.String, java.lang.Throwable)' @ YesilcamTVProvider.optional
+- load("Ayşecik Yuvanın Bekçileri") `https://yesilcamtv.com.tr/aysecik-yuvanin-bekcileri-izle-2/`
+  load HATA: NoSuchMethodError: 'int android.util.Log.w(java.lang.String, java.lang.String, java.lang.Throwable)' @ YesilcamTVProvider.optional
+
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_6-1792527740382.json
+
+[Incubating] Problems report is available at: file:///home/runner/work/Repoplayer/Repoplayer/cs/build/reports/problems/problems-report.html
+
+BUILD SUCCESSFUL in 38s
+6 actionable tasks: 3 executed, 3 from cache
