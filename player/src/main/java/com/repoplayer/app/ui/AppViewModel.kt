@@ -205,9 +205,10 @@ class AppViewModel : ViewModel() {
                     rows = fresh.toList()
                     homeFromCache = false
                 }
-                if (fresh.isNotEmpty()) HomeCache.put(entry.key, fresh)
-                preloadSiblings(entry)
-                else if (rows.isEmpty()) homeError = "Bu kaynağın ana sayfası yok veya boş döndü.\nAra sekmesinden arama yapabilirsiniz."
+                if (fresh.isNotEmpty()) {
+                    HomeCache.put(entry.key, fresh)
+                    preloadSiblings(entry)
+                } else if (rows.isEmpty()) homeError = "Bu kaynağın ana sayfası yok veya boş döndü.\nAra sekmesinden arama yapabilirsiniz."
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
