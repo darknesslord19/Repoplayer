@@ -94,7 +94,14 @@ class StremioSource(override val entry: SourceEntry) : ContentSource {
 
     private suspend fun catalog(type: String, id: String, extra: String?): List<ContentItem> {
         val url = "$base/catalog/$type/$id" + (if (extra != null) "/$extra" else "") + ".json"
-        return Net.jsonTree(url).get("metas")?.mapNotNull { it.toItem() } ?: emptyList()
+        val metas = runCatching { Net.jsonTree(url).get("metas") }.getOrElse { e ->
+            // Bazı eklentiler ekstra parametreyi yol yerine sorgu olarak bekler
+            if (extra == null) throw e
+            Net.jsonTree("$base/catalog/$type/$id.json?$extra").get("metas")
+        }
+        val items = metas?.mapNotNull { it.toItem() } ?: emptyList()
+        if (items.isEmpty() && extra == null) com.repoplayer.app.data.Logger.w("Stremio", "${entry.name}: \"$id\" kataloğu boş döndü (eklenti sunucusu içerik vermiyor)")
+        return items
     }
 
     private fun JsonNode.requiresExtra(): Boolean {
