@@ -79,7 +79,7 @@ jobs:
           mkdir -p src-out
           for f in cs3/*.cs3; do
             n=$(basename "$f" .cs3)
-            ./jadx/bin/jadx --no-res -d "dec/$n" "tmp/$n/classes.dex" >/dev/null 2>&1 || true
+            ./jadx/bin/jadx --no-res --show-bad-code -d "dec/$n" "tmp/$n/classes.dex" >/dev/null 2>&1 || true
             find "dec/$n" -name '*.java' -not -path '*/kotlin/*' -not -path '*/androidx/*' -exec cat {} + > "src-out/$n.java.txt" 2>/dev/null || true
           done
           ls -la src-out
