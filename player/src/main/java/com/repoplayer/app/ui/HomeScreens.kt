@@ -29,6 +29,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -91,18 +93,28 @@ fun HomeScreen(vm: AppViewModel) {
     if (vm.selected == null) { NoSources(vm); return }
     val sel = vm.selected!!
     val continueList = vm.history.filter { it.item.sourceKey == sel.key && !it.finished }.distinctBy { it.item.id }.take(20)
+    val rows = vm.visibleRows()
 
     Box(Modifier.fillMaxSize()) {
         when {
             vm.rows.isEmpty() && vm.homeLoading -> CenterMessage("${sel.name} yükleniyor…", loading = true)
             vm.rows.isEmpty() && vm.homeError != null -> CenterMessage(vm.homeError!!) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { vm.loadHome() }, colors = ButtonDefaults.buttonColors(containerColor = Accent)) { Text("Tekrar dene", color = Color.Black) }
-                    if (sel.type == RepoType.NUVIO) TextButton(onClick = { vm.tab = 3 }) { Text("Ayarlar", color = Accent) }
+                    Button(onClick = { vm.loadHome(force = true) }, colors = ButtonDefaults.buttonColors(containerColor = Accent), modifier = Modifier.focusFrame(RoundedCornerShape(50))) { Text("Tekrar dene", color = Color.Black) }
+                    TextButton(onClick = { vm.showPicker = true }, modifier = Modifier.focusFrame(RoundedCornerShape(50))) { Text("Kaynak değiştir", color = Accent) }
+                    TextButton(onClick = { vm.tab = 3; vm.openSettings("dev"); vm.openSettings("log") }, modifier = Modifier.focusFrame(RoundedCornerShape(50))) { Text("Günlük", color = Accent) }
                 }
             }
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 96.dp)) {
                 item {
+                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        SourceIcon(sel.icon, sel.name, 30)
+                        Text(sel.name, Modifier.weight(1f).padding(horizontal = 10.dp), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (vm.homeFromCache && vm.homeLoading) Text("güncelleniyor…", color = TextDim, fontSize = 12.sp)
+                        IconButton(onClick = { vm.loadHome(force = true) }, modifier = Modifier.focusFrame(CircleShape)) {
+                            Icon(painterResource(R.drawable.ic_refresh), "Yenile", tint = TextDim)
+                        }
+                    }
                     if (vm.homeLoading) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Accent, trackColor = Color.Transparent)
                 }
                 if (continueList.isNotEmpty()) item {
@@ -113,19 +125,22 @@ fun HomeScreen(vm: AppViewModel) {
                         }
                     }
                 }
-                items(vm.rows) { row ->
+                items(rows) { row ->
                     ContentRowView(row, { vm.openDetails(it) }, if (row.moreKey != null) ({ vm.openMore(row) }) else null)
+                }
+                if (rows.isEmpty() && vm.rows.isNotEmpty()) item {
+                    Text("Tüm kategoriler gizli. Ayarlar > Plus Menü > Kategoriler", Modifier.padding(24.dp), color = TextDim)
                 }
             }
         }
-        SourcePill(vm, Modifier.align(Alignment.BottomEnd).padding(16.dp))
+        if (!LocalRail.current) SourcePill(vm, Modifier.align(Alignment.BottomEnd).padding(16.dp))
     }
 }
 
 @Composable
 fun ItemGrid(items: List<ContentItem>, vm: AppViewModel, header: (@Composable () -> Unit)? = null, footer: (@Composable () -> Unit)? = null, onEnd: (() -> Unit)? = null) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(112.dp),
+        columns = GridCells.Adaptive(posterWidth(LocalUi.current?.posterSize)),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -169,8 +184,8 @@ fun SearchScreen(vm: AppViewModel) {
             OutlinedTextField(
                 value = vm.query,
                 onValueChange = { vm.query = it },
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                placeholder = { Text("${vm.selected?.name} içinde ara") },
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp),
+                placeholder = { Text(if (vm.searchAll) "Tüm kaynaklarda ara" else "${vm.selected?.name} içinde ara") },
                 leadingIcon = { Icon(painterResource(R.drawable.ic_search), null) },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
@@ -178,14 +193,41 @@ fun SearchScreen(vm: AppViewModel) {
                 keyboardActions = KeyboardActions(onSearch = { vm.search() }),
                 colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Accent, cursorColor = Accent),
             )
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilterChip(
+                    selected = !vm.searchAll, onClick = { vm.searchAll = false; if (vm.query.isNotBlank()) vm.search() },
+                    label = { Text(vm.selected?.name ?: "Kaynak", maxLines = 1) },
+                    modifier = Modifier.focusFrame(RoundedCornerShape(8.dp)),
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Accent, selectedLabelColor = Color.Black),
+                )
+                FilterChip(
+                    selected = vm.searchAll, onClick = { vm.searchAll = true; if (vm.query.isNotBlank()) vm.search() },
+                    label = { Text("Tüm kaynaklar (${vm.visibleEntries.size})") },
+                    modifier = Modifier.focusFrame(RoundedCornerShape(8.dp)),
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Accent, selectedLabelColor = Color.Black),
+                )
+                Box(Modifier.weight(1f))
+                Button(onClick = { vm.search() }, colors = ButtonDefaults.buttonColors(containerColor = Accent), modifier = Modifier.focusFrame(RoundedCornerShape(50))) {
+                    Text("Ara", color = Color.Black)
+                }
+            }
             when {
-                vm.searching -> CenterMessage("Aranıyor…", loading = true)
+                vm.searchAll && vm.globalResults.isNotEmpty() -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 96.dp)) {
+                    if (vm.searching) item { LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Accent, trackColor = Color.Transparent) }
+                    items(vm.globalResults) { r ->
+                        RowHeader("${r.entry.name} · ${r.items.size}", null)
+                        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            items(r.items) { PosterCard(it, { vm.openDetails(it) }) }
+                        }
+                    }
+                }
+                vm.searching -> CenterMessage(if (vm.searchAll) "Tüm kaynaklarda aranıyor…" else "Aranıyor…", loading = true)
                 vm.searchError != null -> CenterMessage(vm.searchError!!)
-                vm.searchResults.isEmpty() -> CenterMessage("Aramak istediğiniz film veya diziyi yazın")
-                else -> ItemGrid(vm.searchResults, vm)
+                !vm.searchAll && vm.searchResults.isNotEmpty() -> ItemGrid(vm.searchResults, vm)
+                else -> CenterMessage("Aramak istediğiniz film veya diziyi yazın")
             }
         }
-        SourcePill(vm, Modifier.align(Alignment.BottomEnd).padding(16.dp))
+        if (!LocalRail.current) SourcePill(vm, Modifier.align(Alignment.BottomEnd).padding(16.dp))
     }
 }
 

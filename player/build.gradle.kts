@@ -17,8 +17,10 @@ android {
         applicationId = "com.repoplayer.app"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0.0"
+        // CI'da her derleme numarası yeni bir sürümdür (uygulama içi güncelleme denetimi bunu kullanır)
+        val run = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0
+        versionCode = 100 + run
+        versionName = "1.0.$run"
     }
 
     signingConfigs {
@@ -99,6 +101,7 @@ dependencies {
     implementation(libs.media3.exoplayer.dash)
     implementation(libs.media3.ui)
     implementation(libs.media3.common)
+    implementation(libs.media3.datasource.okhttp)
 
     implementation(libs.jackson.module.kotlin)
     implementation(libs.kotlinx.coroutines.core)

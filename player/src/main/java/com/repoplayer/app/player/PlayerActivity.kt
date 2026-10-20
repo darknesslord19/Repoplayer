@@ -1,23 +1,32 @@
 package com.repoplayer.app.player
 
+import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.app.PictureInPictureParams
+import android.content.Context
+import android.content.Intent
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
+import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -31,22 +40,28 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
+import androidx.media3.ui.TrackSelectionDialogBuilder
 import com.repoplayer.app.App
 import com.repoplayer.app.R
 import com.repoplayer.app.data.DEFAULT_UA
+import com.repoplayer.app.data.Logger
+import com.repoplayer.app.data.Net
 import com.repoplayer.app.data.StreamType
 import com.repoplayer.app.data.Subtitle
 import com.repoplayer.app.data.WatchRecord
+import kotlin.math.abs
 
 @androidx.annotation.OptIn(UnstableApi::class)
 class PlayerActivity : ComponentActivity() {
@@ -55,51 +70,79 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var playerView: PlayerView
     private lateinit var topBar: LinearLayout
     private lateinit var titleView: TextView
+    private lateinit var infoView: TextView
+    private lateinit var indicator: TextView
+    private lateinit var lockButton: ImageButton
+    private lateinit var nextEpButton: TextView
     private var index = 0
     private var resizeIndex = 0
+    private var locked = false
+    private var ticks = 0
+    private var nextDismissed = false
     private val localSubs = mutableListOf<Subtitle>()
     private val handler = Handler(Looper.getMainLooper())
     private val store get() = App.instance.store
+    private val seekMs get() = store.seekStep.coerceIn(5, 60) * 1000L
+    private lateinit var audio: AudioManager
 
     private val resizeModes = listOf(
         AspectRatioFrameLayout.RESIZE_MODE_FIT to "Sığdır",
         AspectRatioFrameLayout.RESIZE_MODE_ZOOM to "Yakınlaştır",
         AspectRatioFrameLayout.RESIZE_MODE_FILL to "Doldur",
     )
+    private val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 
     private val pickSubtitle = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri == null) return@registerForActivityResult
-        runCatching { contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         val name = uri.lastPathSegment?.substringAfterLast('/') ?: "Yerel altyazı"
         localSubs.add(0, Subtitle(lang = "Yerel: $name", url = uri.toString()))
         reload(keepPosition = true, selectFirstSub = true)
     }
 
-    private val saver = object : Runnable {
+    /** Saniyede bir: ilerleme kaydı (5 sn'de bir) ve "sonraki bölüm" düğmesi */
+    private val ticker = object : Runnable {
         override fun run() {
-            saveProgress()
-            handler.postDelayed(this, 5000)
+            ticks++
+            if (ticks % 5 == 0) saveProgress()
+            updateNextButton()
+            handler.postDelayed(this, 1000)
         }
     }
+
+    private val hideIndicator = Runnable { indicator.visibility = View.GONE }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         req = Playback.request ?: run { finish(); return }
         index = req.startIndex.coerceIn(0, req.links.lastIndex)
+        audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        resizeIndex = store.defaultResize.coerceIn(0, resizeModes.lastIndex)
         buildUi()
         hideSystemBars()
 
+        val (minBuf, maxBuf) = when (store.bufferLevel) {
+            0 -> 15_000 to 50_000
+            2 -> 60_000 to 300_000
+            else -> 30_000 to 120_000
+        }
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(minBuf, maxBuf, 1_500, 3_000)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
         val p = ExoPlayer.Builder(this)
-            .setSeekBackIncrementMs(10_000)
-            .setSeekForwardIncrementMs(10_000)
+            .setLoadControl(loadControl)
+            .setSeekBackIncrementMs(seekMs)
+            .setSeekForwardIncrementMs(seekMs)
             .build()
         p.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) = onError(error)
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) {
                     saveProgress()
-                    if (req.onNext != null) playNextEpisode()
+                    if (req.onNext != null && store.autoNextEpisode) playNextEpisode()
                 }
             }
         })
@@ -107,24 +150,29 @@ class PlayerActivity : ComponentActivity() {
             .setPreferredTextLanguage("tr")
             .setPreferredAudioLanguages("tr", "en")
             .build()
+        p.playbackParameters = PlaybackParameters(store.defaultSpeed / 100f)
         player = p
         playerView.player = p
 
-        val resume = store.record(req.progressKey)?.takeIf { !it.finished }?.position ?: 0L
+        val resume = if (store.autoResume) store.record(req.progressKey)?.takeIf { !it.finished }?.position ?: 0L else 0L
         load(index, resume)
-        if (resume > 0) Toast.makeText(this, "Kaldığın yerden devam: ${formatMs(resume)}", Toast.LENGTH_SHORT).show()
+        if (resume > 0) toast("Kaldığın yerden devam: ${formatMs(resume)}")
     }
 
     // ---------------- Arayüz ----------------
 
     private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
 
-    private fun focusBg(): StateListDrawable {
-        fun shape(color: Int) = GradientDrawable().apply { cornerRadius = dp(20).toFloat(); setColor(color) }
+    private fun focusBg(radius: Int = 20, idle: Int = Color.TRANSPARENT): StateListDrawable {
+        fun shape(color: Int, stroke: Boolean = false) = GradientDrawable().apply {
+            cornerRadius = dp(radius).toFloat()
+            setColor(color)
+            if (stroke) setStroke(dp(2), 0xFF2ED3B7.toInt())
+        }
         return StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_focused), shape(0x662ED3B7))
+            addState(intArrayOf(android.R.attr.state_focused), shape(0x552ED3B7, stroke = true))
             addState(intArrayOf(android.R.attr.state_pressed), shape(0x442ED3B7))
-            addState(intArrayOf(), shape(Color.TRANSPARENT))
+            addState(intArrayOf(), shape(idle))
         }
     }
 
@@ -136,10 +184,30 @@ class PlayerActivity : ComponentActivity() {
         setPadding(dp(10), dp(10), dp(10), dp(10))
         isFocusable = true
         setOnClickListener { onClick() }
-        setOnLongClickListener { Toast.makeText(context, desc, Toast.LENGTH_SHORT).show(); true }
-        layoutParams = LinearLayout.LayoutParams(dp(46), dp(46)).apply { marginStart = dp(4) }
+        setOnLongClickListener { toast(desc); true }
+        layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
     }
 
+    /** İkon + yazı içeren hap düğme (TV'de ne yaptığı okunabilsin) */
+    private fun chip(icon: Int, label: String, onClick: () -> Unit) = TextView(this).apply {
+        text = label
+        setTextColor(Color.WHITE)
+        textSize = 13f
+        gravity = Gravity.CENTER_VERTICAL
+        val d = getDrawable(icon)?.mutate()
+        d?.setTint(Color.WHITE)
+        d?.setBounds(0, 0, dp(18), dp(18))
+        setCompoundDrawables(d, null, null, null)
+        compoundDrawablePadding = dp(6)
+        background = focusBg(18, 0x33FFFFFF)
+        setPadding(dp(12), dp(8), dp(14), dp(8))
+        isFocusable = true
+        isClickable = true
+        setOnClickListener { onClick() }
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(8) }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
     private fun buildUi() {
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         playerView = PlayerView(this).apply {
@@ -147,48 +215,103 @@ class PlayerActivity : ComponentActivity() {
             setShowSubtitleButton(true)
             setShowNextButton(false)
             setShowPreviousButton(false)
+            setShowFastForwardButton(true)
+            setShowRewindButton(true)
             controllerShowTimeoutMs = 4000
             keepScreenOn = true
-            resizeMode = resizeModes[0].first
+            resizeMode = resizeModes[resizeIndex].first
         }
-        playerView.subtitleView?.apply {
-            setStyle(CaptionStyleCompat(Color.WHITE, Color.TRANSPARENT, Color.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_OUTLINE, Color.BLACK, null))
-            setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * store.subtitleSize / 100f)
-        }
+        applySubtitleStyle()
 
+        // ---- Üst çubuk: geri + başlık, altında işlev hapları ----
         topBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(8), dp(12), dp(8))
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xCC000000.toInt(), 0x00000000))
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(10))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xDD000000.toInt(), 0x00000000))
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP)
         }
-        topBar.addView(iconButton(R.drawable.ic_back, "Geri") { finish() })
-        titleView = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 15f
-            maxLines = 2
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(iconButton(R.drawable.ic_back, "Geri") { finish() })
+        val texts = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(dp(8), 0, dp(8), 0)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        topBar.addView(titleView)
-        topBar.addView(iconButton(R.drawable.ic_subtitles, "Altyazı dosyası ekle") {
-            pickSubtitle.launch(arrayOf("*/*"))
+        titleView = TextView(this).apply { setTextColor(Color.WHITE); textSize = 16f; maxLines = 1; typeface = Typeface.DEFAULT_BOLD }
+        infoView = TextView(this).apply { setTextColor(0xFFB8C0CC.toInt()); textSize = 12f; maxLines = 1 }
+        texts.addView(titleView)
+        texts.addView(infoView)
+        head.addView(texts)
+        topBar.addView(head)
+
+        val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(4), dp(6), dp(4), 0) }
+        chips.addView(chip(R.drawable.ic_library, "Kaynaklar (${req.links.size})") { showSources() })
+        chips.addView(chip(R.drawable.ic_audio, "Ses") { showTracks(C.TRACK_TYPE_AUDIO, "Ses dili") })
+        chips.addView(chip(R.drawable.ic_subtitles, "Altyazı") { showTracks(C.TRACK_TYPE_TEXT, "Altyazı") })
+        chips.addView(chip(R.drawable.ic_add, "Altyazı dosyası") { pickSubtitle.launch(arrayOf("*/*")) })
+        chips.addView(chip(R.drawable.ic_speed, "Hız") { showSpeed() })
+        chips.addView(chip(R.drawable.ic_aspect, "Boyut") { cycleResize() })
+        chips.addView(chip(R.drawable.ic_forward, "+${store.skipIntroSec} sn") { player?.let { it.seekTo(it.currentPosition + store.skipIntroSec * 1000L) } })
+        chips.addView(chip(R.drawable.ic_lock, "Kilitle") { setLocked(true) })
+        chips.addView(chip(R.drawable.ic_open, "Harici") { Playback.openChooser(this, req.links[index], req.title) })
+        if (req.onNext != null) chips.addView(chip(R.drawable.ic_next, "Sonraki bölüm") { playNextEpisode() })
+        topBar.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(chips)
         })
-        topBar.addView(iconButton(R.drawable.ic_library, "Kaynak değiştir") { showSources() })
-        topBar.addView(iconButton(R.drawable.ic_aspect, "Görüntü boyutu") { cycleResize() })
-        topBar.addView(iconButton(R.drawable.ic_open, "Harici oynatıcıda aç") {
-            Playback.openChooser(this, req.links[index], req.title)
-        })
-        if (req.onNext != null) topBar.addView(iconButton(R.drawable.ic_next, "Sonraki bölüm") { playNextEpisode() })
 
         playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
-            topBar.visibility = visibility
+            if (!locked) topBar.visibility = visibility
         })
 
+        // ---- Orta gösterge (parlaklık / ses / sarma) ----
+        indicator = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 20f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setPadding(dp(20), dp(12), dp(20), dp(12))
+            background = GradientDrawable().apply { cornerRadius = dp(16).toFloat(); setColor(0xAA000000.toInt()) }
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER)
+        }
+
+        // ---- Kilit düğmesi ----
+        lockButton = iconButton(R.drawable.ic_lock_open, "Kilidi aç") { setLocked(false) }.apply {
+            background = focusBg(23, 0x88000000.toInt())
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(dp(52), dp(52), Gravity.START or Gravity.CENTER_VERTICAL).apply { marginStart = dp(24) }
+        }
+
+        // ---- Sonraki bölüm düğmesi (son 90 sn) ----
+        nextEpButton = chip(R.drawable.ic_next, "Sonraki: ${req.nextLabel ?: "bölüm"}") { playNextEpisode() }.apply {
+            background = focusBg(22, 0xEE2ED3B7.toInt())
+            setTextColor(Color.BLACK)
+            compoundDrawables[0]?.setTint(Color.BLACK)
+            maxLines = 1
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.BOTTOM).apply {
+                marginEnd = dp(24); bottomMargin = dp(96)
+            }
+        }
+
         root.addView(playerView)
+        root.addView(indicator)
+        root.addView(nextEpButton)
         root.addView(topBar)
+        root.addView(lockButton)
         setContentView(root)
+        setupGestures()
+    }
+
+    private fun applySubtitleStyle() {
+        val fg = when (store.subtitleColor) { 1 -> 0xFFFFE14D.toInt(); 2 -> 0xFF2ED3B7.toInt(); else -> Color.WHITE }
+        val bg = if (store.subtitleBackground) 0x99000000.toInt() else Color.TRANSPARENT
+        playerView.subtitleView?.apply {
+            setStyle(CaptionStyleCompat(fg, bg, Color.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_OUTLINE, Color.BLACK, Typeface.DEFAULT_BOLD))
+            setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * store.subtitleSize / 100f)
+            setApplyEmbeddedStyles(false)
+        }
     }
 
     private fun hideSystemBars() {
@@ -199,10 +322,62 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
+
+    private fun showIndicator(text: String) {
+        indicator.text = text
+        indicator.visibility = View.VISIBLE
+        handler.removeCallbacks(hideIndicator)
+        handler.postDelayed(hideIndicator, 800)
+    }
+
+    private fun setLocked(value: Boolean) {
+        locked = value
+        playerView.useController = !value
+        if (value) {
+            playerView.hideController()
+            topBar.visibility = View.GONE
+            lockButton.visibility = View.VISIBLE
+            lockButton.requestFocus()
+            toast("Ekran kilitlendi")
+        } else {
+            lockButton.visibility = View.GONE
+            playerView.showController()
+        }
+    }
+
     private fun cycleResize() {
         resizeIndex = (resizeIndex + 1) % resizeModes.size
         playerView.resizeMode = resizeModes[resizeIndex].first
-        Toast.makeText(this, resizeModes[resizeIndex].second, Toast.LENGTH_SHORT).show()
+        showIndicator(resizeModes[resizeIndex].second)
+    }
+
+    private fun showSpeed() {
+        val p = player ?: return
+        val cur = p.playbackParameters.speed
+        val labels = speeds.map { (if (it == cur) "▶ " else "") + "${it}x" }
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Oynatma hızı")
+            .setItems(labels.toTypedArray()) { _, i ->
+                p.playbackParameters = PlaybackParameters(speeds[i])
+                showIndicator("${speeds[i]}x")
+            }
+            .show()
+    }
+
+    private fun showTracks(type: Int, title: String) {
+        val p = player ?: return
+        val hasTracks = p.currentTracks.groups.any { it.type == type }
+        if (!hasTracks) {
+            toast(if (type == C.TRACK_TYPE_TEXT) "Altyazı yok — dosyadan ekleyebilirsin" else "Başka ses izi yok")
+            return
+        }
+        TrackSelectionDialogBuilder(this, title, p, type)
+            .setTheme(android.R.style.Theme_Material_Dialog_Alert)
+            .setShowDisableOption(type == C.TRACK_TYPE_TEXT)
+            .setAllowAdaptiveSelections(false)
+            .build()
+            .show()
     }
 
     private fun showSources() {
@@ -211,6 +386,102 @@ class PlayerActivity : ComponentActivity() {
             .setTitle("Kaynaklar (${req.links.size})")
             .setItems(names.toTypedArray()) { _, i -> index = i; reload(keepPosition = true) }
             .show()
+    }
+
+    // ---------------- Jestler ----------------
+
+    private enum class Mode { NONE, SEEK, BRIGHTNESS, VOLUME }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupGestures() {
+        var mode = Mode.NONE
+        var startX = 0f
+        var startY = 0f
+        var startPos = 0L
+        var seekTarget = 0L
+        var startBrightness = 0.5f
+        var startVolume = 0
+        val maxVolume = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val edge = dp(48)
+
+        val detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean {
+                mode = Mode.NONE
+                startX = e.x
+                startY = e.y
+                startPos = player?.currentPosition ?: 0L
+                startBrightness = window.attributes.screenBrightness.takeIf { it >= 0 } ?: 0.5f
+                startVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+                return true
+            }
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (playerView.isControllerFullyVisible) playerView.hideController() else playerView.showController()
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val p = player ?: return false
+                val w = playerView.width
+                when {
+                    e.x < w / 3f -> { p.seekBack(); showIndicator("⏪ ${store.seekStep} sn") }
+                    e.x > w * 2f / 3f -> { p.seekForward(); showIndicator("${store.seekStep} sn ⏩") }
+                    else -> { if (p.isPlaying) p.pause() else p.play(); showIndicator(if (p.isPlaying) "▶" else "❚❚") }
+                }
+                return true
+            }
+
+            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
+                if (startY < edge || startY > playerView.height - edge) return false
+                val totalX = e2.x - startX
+                val totalY = e2.y - startY
+                if (mode == Mode.NONE) {
+                    if (abs(totalX) < dp(16) && abs(totalY) < dp(16)) return false
+                    mode = when {
+                        abs(totalX) > abs(totalY) -> Mode.SEEK
+                        startX < playerView.width / 2f -> Mode.BRIGHTNESS
+                        else -> Mode.VOLUME
+                    }
+                }
+                when (mode) {
+                    Mode.SEEK -> {
+                        val dur = player?.duration?.takeIf { it > 0 } ?: return true
+                        val delta = (totalX / playerView.width * 180_000).toLong() // ekran genişliği = 3 dk
+                        seekTarget = (startPos + delta).coerceIn(0, dur)
+                        val sign = if (delta >= 0) "+" else "-"
+                        showIndicator("${formatMs(seekTarget)}  ($sign${formatMs(abs(delta))})")
+                    }
+                    Mode.BRIGHTNESS -> {
+                        val v = (startBrightness - totalY / playerView.height).coerceIn(0.01f, 1f)
+                        window.attributes = window.attributes.apply { screenBrightness = v }
+                        showIndicator("☀ ${(v * 100).toInt()}%")
+                    }
+                    Mode.VOLUME -> {
+                        val v = (startVolume - totalY / playerView.height * maxVolume * 1.5f).toInt().coerceIn(0, maxVolume)
+                        audio.setStreamVolume(AudioManager.STREAM_MUSIC, v, 0)
+                        showIndicator("🔊 ${v * 100 / maxVolume.coerceAtLeast(1)}%")
+                    }
+                    Mode.NONE -> Unit
+                }
+                return true
+            }
+        })
+
+        playerView.setOnTouchListener { _, event ->
+            if (locked) {
+                if (event.action == MotionEvent.ACTION_UP) {
+                    lockButton.visibility = View.VISIBLE
+                }
+                return@setOnTouchListener true
+            }
+            if (!store.gestures) return@setOnTouchListener false
+            detector.onTouchEvent(event)
+            if (event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL) {
+                if (mode == Mode.SEEK) player?.seekTo(seekTarget)
+                mode = Mode.NONE
+            }
+            true
+        }
     }
 
     // ---------------- Oynatma ----------------
@@ -237,14 +508,14 @@ class PlayerActivity : ComponentActivity() {
     private fun load(i: Int, position: Long, selectFirstSub: Boolean = false) {
         val p = player ?: return
         val link = req.links[i]
-        titleView.text = "${req.title}\n${listOfNotNull(link.quality, link.name).joinToString(" · ")}"
+        titleView.text = req.title
+        infoView.text = listOfNotNull(link.quality, link.name, "${i + 1}/${req.links.size}").joinToString(" · ")
+        nextDismissed = false
 
         val ua = link.headers.entries.firstOrNull { it.key.equals("user-agent", true) }?.value ?: DEFAULT_UA
-        val http = DefaultHttpDataSource.Factory()
+        // Ortak OkHttp istemcisi: bağlantı havuzu ve HTTP/2 ile daha hızlı açılış
+        val http = OkHttpDataSource.Factory(Net.client)
             .setUserAgent(ua)
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(20_000)
-            .setReadTimeoutMs(30_000)
             .setDefaultRequestProperties(link.headers.filterKeys { !it.equals("user-agent", true) })
         val factory = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http))
 
@@ -286,15 +557,24 @@ class PlayerActivity : ComponentActivity() {
 
     private fun onError(error: PlaybackException) {
         val msg = error.errorCodeName.removePrefix("ERROR_CODE_")
+        Logger.e("Player", "Kaynak ${index + 1} (${req.links[index].name}) açılamadı: $msg", error)
         if (store.autoNextSource && index < req.links.lastIndex) {
-            Toast.makeText(this, "Kaynak açılamadı ($msg), sonrakine geçiliyor…", Toast.LENGTH_SHORT).show()
+            toast("Kaynak açılamadı ($msg), sonrakine geçiliyor…")
             val pos = player?.currentPosition ?: 0L
             index++
             load(index, pos)
         } else {
-            Toast.makeText(this, "Oynatılamadı: $msg. Başka bir kaynak deneyin.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Oynatılamadı: $msg. Kaynaklar'dan başka birini deneyin.", Toast.LENGTH_LONG).show()
             playerView.showController()
         }
+    }
+
+    private fun updateNextButton() {
+        val p = player ?: return
+        val show = req.onNext != null && !nextDismissed && !locked && p.duration > 0 &&
+            p.duration - p.currentPosition in 1..90_000
+        val vis = if (show) View.VISIBLE else View.GONE
+        if (nextEpButton.visibility != vis) nextEpButton.visibility = vis
     }
 
     private fun playNextEpisode() {
@@ -326,31 +606,55 @@ class PlayerActivity : ComponentActivity() {
         return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s % 3600) / 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
     }
 
-    // ---------------- Yaşam döngüsü ----------------
+    // ---------------- TV kumandası ----------------
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        // TV kumandası: kontrol çubuğu kapalıyken ok tuşları onu açsın
-        if (event.action == KeyEvent.ACTION_DOWN && !playerView.isControllerFullyVisible) {
+        val p = player
+        if (event.action == KeyEvent.ACTION_DOWN && p != null) {
+            if (locked) {
+                lockButton.visibility = View.VISIBLE
+                lockButton.requestFocus()
+                return if (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode == KeyEvent.KEYCODE_ENTER) super.dispatchKeyEvent(event) else true
+            }
             when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    playerView.showController(); return true
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> { if (p.isPlaying) p.pause() else p.play(); playerView.showController(); return true }
+                KeyEvent.KEYCODE_MEDIA_PLAY -> { p.play(); return true }
+                KeyEvent.KEYCODE_MEDIA_PAUSE -> { p.pause(); playerView.showController(); return true }
+                KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { p.seekForward(); showIndicator("${store.seekStep} sn ⏩"); return true }
+                KeyEvent.KEYCODE_MEDIA_REWIND -> { p.seekBack(); showIndicator("⏪ ${store.seekStep} sn"); return true }
+                KeyEvent.KEYCODE_MEDIA_NEXT -> { if (req.onNext != null) playNextEpisode(); return true }
+                KeyEvent.KEYCODE_MENU -> { showSources(); return true }
+                KeyEvent.KEYCODE_CAPTIONS -> { showTracks(C.TRACK_TYPE_TEXT, "Altyazı"); return true }
+            }
+            // Kontrol çubuğu kapalıyken: sol/sağ sarar, orta tuş durdurur/oynatır, yukarı/aşağı menüyü açar
+            if (!playerView.isControllerFullyVisible && topBar.visibility != View.VISIBLE) {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> { p.seekBack(); showIndicator("⏪ ${store.seekStep} sn"); return true }
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> { p.seekForward(); showIndicator("${store.seekStep} sn ⏩"); return true }
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                        if (p.isPlaying) p.pause() else p.play()
+                        playerView.showController()
+                        return true
+                    }
+                    KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> { playerView.showController(); return true }
                 }
-                KeyEvent.KEYCODE_DPAD_LEFT -> { player?.seekBack(); return true }
-                KeyEvent.KEYCODE_DPAD_RIGHT -> { player?.seekForward(); return true }
             }
         }
-        return playerView.dispatchKeyEvent(event) || super.dispatchKeyEvent(event)
+        return super.dispatchKeyEvent(event)
     }
+
+    // ---------------- Yaşam döngüsü ----------------
 
     override fun onResume() {
         super.onResume()
         hideSystemBars()
-        handler.post(saver)
+        handler.removeCallbacks(ticker)
+        handler.post(ticker)
     }
 
     override fun onPause() {
         super.onPause()
-        handler.removeCallbacks(saver)
+        handler.removeCallbacks(ticker)
         saveProgress()
         val inPip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode
         if (!inPip) player?.pause()
@@ -365,14 +669,17 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        playerView.useController = !isInPictureInPictureMode
-        topBar.visibility = if (isInPictureInPictureMode) View.GONE else topBar.visibility
+        playerView.useController = !isInPictureInPictureMode && !locked
+        if (isInPictureInPictureMode) {
+            topBar.visibility = View.GONE
+            nextEpButton.visibility = View.GONE
+        }
     }
 
     override fun onDestroy() {
-        handler.removeCallbacks(saver)
+        handler.removeCallbacksAndMessages(null)
         saveProgress()
         player?.release()
         player = null

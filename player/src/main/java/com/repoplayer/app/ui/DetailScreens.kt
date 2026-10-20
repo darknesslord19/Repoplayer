@@ -244,11 +244,11 @@ fun LinksSheet(vm: AppViewModel, state: LinksState) {
 fun SourcePickerSheet(vm: AppViewModel) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var filter by remember { mutableStateOf("") }
-    val list = rememberFiltered(vm.entries, filter)
+    val list = rememberFiltered(vm.visibleEntries, filter)
     ModalBottomSheet(onDismissRequest = { vm.showPicker = false }, sheetState = sheet, containerColor = Surface1) {
         Column(Modifier.fillMaxWidth().heightIn(max = 640.dp)) {
             Text("Kaynak seç", Modifier.padding(horizontal = 20.dp), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            if (vm.entries.size > 8) {
+            if (vm.visibleEntries.size > 8) {
                 androidx.compose.material3.OutlinedTextField(
                     value = filter, onValueChange = { filter = it },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -257,7 +257,7 @@ fun SourcePickerSheet(vm: AppViewModel) {
                 )
             }
             LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-                list.groupBy { it.group }.forEach { (group, entries) ->
+                list.groupBy { if (it.key in vm.ui.pinnedSources) "📌 Sabitlenenler" else it.group }.forEach { (group, entries) ->
                     item { Text(group, Modifier.padding(start = 20.dp, top = 14.dp, bottom = 4.dp), color = Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
                     items(entries) { e ->
                         val selected = e.key == vm.selected?.key

@@ -17,7 +17,7 @@ import kotlinx.coroutines.withContext
 import java.net.URLEncoder
 
 /** TMDB istemcisi (Nuvio kaynakları TMDB kimliğiyle çalışır) */
-class Tmdb(private val key: String, private val language: String) {
+class Tmdb(private val key: String, private val language: String, private val quality: Int = 1) {
     private val base = "https://api.themoviedb.org/3"
     private val bearer = key.length > 40
 
@@ -29,8 +29,10 @@ class Tmdb(private val key: String, private val language: String) {
         return com.repoplayer.app.data.json.readTree(Net.text(url, headers))
     }
 
-    fun img(path: String?, size: String = "w342"): String? =
-        path?.takeIf { it.isNotBlank() }?.let { "https://image.tmdb.org/t/p/$size$it" }
+    private val posterSize = when (quality) { 0 -> "w185"; 2 -> "w500"; else -> "w342" }
+
+    fun img(path: String?, size: String? = null): String? =
+        path?.takeIf { it.isNotBlank() }?.let { "https://image.tmdb.org/t/p/${size ?: posterSize}$it" }
 
     fun toItem(sourceKey: String, n: JsonNode, forcedType: String? = null): ContentItem? {
         val type = forcedType ?: n.str("media_type") ?: return null
@@ -93,7 +95,7 @@ class Tmdb(private val key: String, private val language: String) {
             item = item,
             title = d.str("title") ?: d.str("name") ?: item.title,
             poster = img(d.str("poster_path")) ?: item.poster,
-            backdrop = img(d.str("backdrop_path"), "w780"),
+            backdrop = img(d.str("backdrop_path"), if (quality == 0) "w780" else "w1280"),
             plot = d.str("overview"),
             year = date?.take(4)?.toIntOrNull(),
             tags = d.get("genres")?.mapNotNull { it.str("name") } ?: emptyList(),

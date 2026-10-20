@@ -7,6 +7,7 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.Cache
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -31,12 +32,30 @@ class HttpResult(
 )
 
 object Net {
-    val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(40, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .build()
+    private var cacheDir: File? = null
+    private var timeoutSec = 25L
+    private var useCache = true
+
+    /** Uygulama açılışında ayarlarla yapılandırılır */
+    fun init(cache: File, timeoutSeconds: Int, httpCache: Boolean) {
+        cacheDir = cache
+        timeoutSec = timeoutSeconds.toLong().coerceIn(5, 120)
+        useCache = httpCache
+    }
+
+    val client: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(timeoutSec.coerceAtMost(20), TimeUnit.SECONDS)
+            .readTimeout(timeoutSec + 15, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .retryOnConnectionFailure(true)
+            .apply {
+                val dir = cacheDir
+                if (useCache && dir != null) cache(Cache(File(dir, "http"), 50L * 1024 * 1024))
+            }
+            .build()
+    }
 
     suspend fun request(
         url: String,

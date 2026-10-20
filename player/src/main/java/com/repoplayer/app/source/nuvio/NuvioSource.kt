@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.repoplayer.app.data.ContentItem
 import com.repoplayer.app.data.Details
 import com.repoplayer.app.data.Episode
+import com.repoplayer.app.data.Logger
 import com.repoplayer.app.data.Net
 import com.repoplayer.app.data.RepoEntry
 import com.repoplayer.app.data.RepoType
@@ -96,7 +97,7 @@ class NuvioSource(
     private fun tmdb(): Tmdb {
         val key = store.tmdbKey
         if (key.isBlank()) throw IllegalStateException(TMDB_REQUIRED)
-        return Tmdb(key, store.language)
+        return Tmdb(key, store.language, store.imageQuality)
     }
 
     override fun home(): Flow<Row> = channelFlow {
@@ -105,7 +106,7 @@ class NuvioSource(
             launch(Dispatchers.IO) {
                 runCatching { t.list(entry.key, path, type, 1) }
                     .onSuccess { if (it.isNotEmpty()) send(Row(title, it, "$path|$type", order = i)) }
-                    .onFailure { Log.e("Nuvio", "TMDB listesi alınamadı", it) }
+                    .onFailure { Logger.e("Nuvio", "TMDB listesi alınamadı", it) }
             }
         }
     }
@@ -144,7 +145,7 @@ class NuvioSource(
         val (type, tmdbId) = details.item.id.split(":").let { it[0] to it[1] }
         val disabled = store.disabledScrapers
         val list = scrapers().filter { it.enabled && it.id !in disabled && (type in it.types || (type == "tv" && "series" in it.types)) }
-        val gate = Semaphore(5)
+        val gate = Semaphore(store.parallelRequests.coerceIn(1, 12))
         coroutineScope {
             list.forEach { s ->
                 launch {
@@ -154,10 +155,10 @@ class NuvioSource(
                                 key = "${entry.url}#${s.id}@${s.version}",
                                 code = code(s),
                                 args = listOf(tmdbId, type, episode?.season, episode?.episode),
-                                timeoutMs = 45_000,
+                                timeoutMs = store.nuvioTimeoutSec.coerceIn(10, 120) * 1000L,
                             )
                             result.forEach { o -> emit(s, o, onLink, onSubtitle) }
-                        }.onFailure { Log.w("Nuvio", "${s.name} başarısız: ${it.message}") }
+                        }.onFailure { Logger.w("Nuvio", "${s.name} başarısız: ${it.message}") }
                     }
                 }
             }

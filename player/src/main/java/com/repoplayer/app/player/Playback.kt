@@ -23,6 +23,7 @@ data class PlayRequest(
     val progressKey: String,
     /** Dizi ise sonraki bölümü başlatır */
     val onNext: (() -> Unit)? = null,
+    val nextLabel: String? = null,
 )
 
 object Playback {

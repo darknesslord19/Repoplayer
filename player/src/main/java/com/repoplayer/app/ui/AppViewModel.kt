@@ -14,23 +14,34 @@ import com.repoplayer.app.App
 import com.repoplayer.app.data.ContentItem
 import com.repoplayer.app.data.Details
 import com.repoplayer.app.data.Episode
+import com.repoplayer.app.data.HomeCache
+import com.repoplayer.app.data.Logger
+import com.repoplayer.app.data.Net
 import com.repoplayer.app.data.PlayerChoice
 import com.repoplayer.app.data.RepoEntry
+import com.repoplayer.app.data.RepoType
 import com.repoplayer.app.data.Row
 import com.repoplayer.app.data.SourceEntry
 import com.repoplayer.app.data.Store
 import com.repoplayer.app.data.StreamLink
 import com.repoplayer.app.data.Subtitle
 import com.repoplayer.app.data.WatchRecord
+import com.repoplayer.app.data.str
 import com.repoplayer.app.player.PlayRequest
 import com.repoplayer.app.player.Playback
 import com.repoplayer.app.source.ContentSource
 import com.repoplayer.app.source.OpenSubs
 import com.repoplayer.app.source.nuvio.NuvioScraper
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 
 class DetailState(val item: ContentItem) {
     var details by mutableStateOf<Details?>(null)
@@ -58,11 +69,43 @@ sealed class Page {
     class More(val state: MoreState) : Page()
 }
 
+/** Ayarlar alt sayfası */
+data class SettingsPage(val id: String, val arg: String? = null)
+
+/** Görünümü etkileyen ayarların anlık kopyası (değişince ekran yeniden çizilir) */
+data class UiPrefs(
+    val posterSize: Int,
+    val showTitles: Boolean,
+    val badgeProgress: Boolean,
+    val badgeWatched: Boolean,
+    val badgeYear: Boolean,
+    val navMode: Int,
+    val hiddenRows: Set<String>,
+    val hiddenSources: Set<String>,
+    val pinnedSources: Set<String>,
+    val profileName: String,
+) {
+    companion object {
+        fun from(s: Store) = UiPrefs(
+            s.posterSize, s.showTitles, s.badgeProgress, s.badgeWatched, s.badgeYear, s.navMode,
+            s.hiddenRows, s.hiddenSources, s.pinnedSources, s.profileName,
+        )
+    }
+}
+
+/** Tüm kaynaklarda arama sonucu */
+data class SourceResults(val entry: SourceEntry, val items: List<ContentItem>, val error: String? = null)
+
+data class UpdateInfo(val version: String, val url: String, val notes: String?)
+
 class AppViewModel : ViewModel() {
     private val app = App.instance
     val store: Store = app.store
     private val sources = app.sources
     private val main = Handler(Looper.getMainLooper())
+
+    var ui by mutableStateOf(UiPrefs.from(store))
+        private set
 
     var entries by mutableStateOf(sources.entries())
         private set
@@ -70,7 +113,7 @@ class AppViewModel : ViewModel() {
         private set
     var selected by mutableStateOf(entries.firstOrNull { it.key == store.selectedSource } ?: entries.firstOrNull())
         private set
-    var tab by mutableIntStateOf(0)
+    var tab by mutableIntStateOf(store.startTab.coerceIn(0, 3))
     var showPicker by mutableStateOf(false)
     var message by mutableStateOf<String?>(null)
     var history by mutableStateOf(store.history)
@@ -79,6 +122,12 @@ class AppViewModel : ViewModel() {
         private set
 
     val stack = mutableStateListOf<Page>()
+    val settingsStack = mutableStateListOf<SettingsPage>()
+
+    /** Seçicide görünen kaynaklar: gizlenenler hariç, sabitlenenler önde */
+    val visibleEntries: List<SourceEntry>
+        get() = entries.filter { it.key !in ui.hiddenSources || it.key == selected?.key }
+            .sortedByDescending { it.key in ui.pinnedSources }
 
     // ---------- Ana sayfa ----------
     var rows by mutableStateOf<List<Row>>(emptyList())
@@ -87,14 +136,22 @@ class AppViewModel : ViewModel() {
         private set
     var homeError by mutableStateOf<String?>(null)
         private set
+    var homeFromCache by mutableStateOf(false)
+        private set
     private var homeJob: Job? = null
 
     init {
         loadHome()
+        if (store.updateReposOnStart && repos.isNotEmpty()) refreshAllRepos(silent = true)
     }
 
     fun toast(text: String) {
         message = text
+    }
+
+    fun updatePrefs(block: Store.() -> Unit) {
+        store.block()
+        ui = UiPrefs.from(store)
     }
 
     fun refreshLocal() {
@@ -108,39 +165,66 @@ class AppViewModel : ViewModel() {
         sources.open(entryFor(key) ?: throw IllegalStateException("Bu içeriğin kaynağı artık ekli değil"))
 
     fun select(entry: SourceEntry) {
-        selected = entry
-        store.selectedSource = entry.key
         showPicker = false
         stack.clear()
         searchResults = emptyList()
+        globalResults = emptyList()
         searchError = null
+        if (selected?.key == entry.key && rows.isNotEmpty()) return
+        selected = entry
+        store.selectedSource = entry.key
         loadHome()
     }
 
-    fun loadHome() {
+    fun loadHome(force: Boolean = false) {
         homeJob?.cancel()
-        rows = emptyList()
         homeError = null
-        val entry = selected ?: run { homeLoading = false; return }
+        val entry = selected ?: run { rows = emptyList(); homeLoading = false; return }
+        val cached = if (store.homeCache && !force) HomeCache.get(entry.key) else null
+        rows = cached ?: emptyList()
+        homeFromCache = cached != null
         homeLoading = true
         homeJob = viewModelScope.launch {
+            val fresh = ArrayList<Row>()
             try {
                 val src = sources.open(entry)
-                src.home().collect { r -> rows = (rows + r).sortedBy { it.order } }
-                if (rows.isEmpty()) homeError = "Bu kaynağın ana sayfası yok veya boş döndü.\nAra sekmesinden arama yapabilirsiniz."
+                src.home().collect { r ->
+                    fresh += r
+                    fresh.sortBy { it.order }
+                    rows = fresh.toList()
+                    homeFromCache = false
+                }
+                if (fresh.isNotEmpty()) HomeCache.put(entry.key, fresh)
+                else if (rows.isEmpty()) homeError = "Bu kaynağın ana sayfası yok veya boş döndü.\nAra sekmesinden arama yapabilirsiniz."
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
-                homeError = t.message ?: t.javaClass.simpleName
+                Logger.e("Home", "${entry.name} ana sayfası", t)
+                if (rows.isEmpty()) homeError = t.message ?: t.javaClass.simpleName
+                else toast("Yenilenemedi, önbellek gösteriliyor: ${t.message}")
             } finally {
                 homeLoading = false
             }
         }
     }
 
+    fun visibleRows(): List<Row> {
+        val key = selected?.key ?: return rows
+        return rows.filter { "$key|${it.title}" !in ui.hiddenRows }
+    }
+
+    fun toggleRowHidden(title: String) {
+        val key = selected?.key ?: return
+        val id = "$key|$title"
+        updatePrefs { hiddenRows = if (id in hiddenRows) hiddenRows - id else hiddenRows + id }
+    }
+
     // ---------- Arama ----------
     var query by mutableStateOf("")
+    var searchAll by mutableStateOf(false)
     var searchResults by mutableStateOf<List<ContentItem>>(emptyList())
+        private set
+    var globalResults by mutableStateOf<List<SourceResults>>(emptyList())
         private set
     var searching by mutableStateOf(false)
         private set
@@ -150,18 +234,41 @@ class AppViewModel : ViewModel() {
 
     fun search() {
         val q = query.trim()
-        val entry = selected ?: return
         if (q.length < 2) return
         searchJob?.cancel()
         searching = true
         searchError = null
+        searchResults = emptyList()
+        globalResults = emptyList()
         searchJob = viewModelScope.launch {
             try {
-                searchResults = sources.open(entry).search(q)
-                if (searchResults.isEmpty()) searchError = "\"$q\" için sonuç yok"
+                if (searchAll) {
+                    val gate = Semaphore(store.parallelRequests.coerceIn(1, 12))
+                    val targets = visibleEntries
+                    val results = targets.map { e ->
+                        async {
+                            gate.withPermit {
+                                try {
+                                    val items = withTimeoutOrNull(store.requestTimeoutSec * 2000L) { sources.open(e).search(q) }
+                                    SourceResults(e, items ?: emptyList(), if (items == null) "zaman aşımı" else null)
+                                } catch (c: CancellationException) {
+                                    throw c
+                                } catch (t: Throwable) {
+                                    SourceResults(e, emptyList(), t.message)
+                                }
+                            }.also { r -> if (r.items.isNotEmpty()) globalResults = (globalResults + r).sortedBy { targets.indexOf(it.entry) } }
+                        }
+                    }.awaitAll()
+                    if (results.none { it.items.isNotEmpty() }) searchError = "\"$q\" için hiçbir kaynakta sonuç yok"
+                } else {
+                    val entry = selected ?: return@launch
+                    searchResults = sources.open(entry).search(q)
+                    if (searchResults.isEmpty()) searchError = "\"$q\" için sonuç yok"
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
+                Logger.e("Search", "Arama", t)
                 searchError = t.message ?: "Arama başarısız"
             } finally {
                 searching = false
@@ -182,6 +289,7 @@ class AppViewModel : ViewModel() {
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
+                Logger.e("Details", item.title, t)
                 state.error = t.message ?: "İçerik yüklenemedi"
             } finally {
                 state.loading = false
@@ -218,10 +326,16 @@ class AppViewModel : ViewModel() {
     }
 
     fun back(): Boolean {
+        if (showPicker) { showPicker = false; return true }
         if (links != null) { closeLinks(); return true }
         if (stack.isNotEmpty()) { stack.removeAt(stack.lastIndex); return true }
+        if (tab == 3 && settingsStack.isNotEmpty()) { settingsStack.removeAt(settingsStack.lastIndex); return true }
         if (tab != 0) { tab = 0; return true }
         return false
+    }
+
+    fun openSettings(id: String, arg: String? = null) {
+        settingsStack.add(SettingsPage(id, arg))
     }
 
     fun toggleFavorite(item: ContentItem) {
@@ -268,6 +382,7 @@ class AppViewModel : ViewModel() {
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
+                Logger.e("Links", details.title, t)
                 state.error = t.message ?: "Bağlantılar alınamadı"
             } finally {
                 delay(150) // bekleyen main.post'lar işlensin
@@ -300,8 +415,9 @@ class AppViewModel : ViewModel() {
             subtitles = state.subtitles.toList(),
             progressKey = key,
             onNext = nextEp?.let { n -> { findLinks(d, n, autoPlay = true) } },
+            nextLabel = nextEp?.name,
         )
-        val resume = store.record(key)?.takeIf { !it.finished }?.position ?: 0L
+        val resume = if (store.autoResume) store.record(key)?.takeIf { !it.finished }?.position ?: 0L else 0L
         Playback.start(context, req, choice, resume)
         links = null
     }
@@ -330,7 +446,7 @@ class AppViewModel : ViewModel() {
         repos = store.repos
         entries = sources.entries()
         if (selected == null || entries.none { it.key == selected?.key }) {
-            selected = entries.firstOrNull()
+            selected = visibleEntries.firstOrNull()
             store.selectedSource = selected?.key
             loadHome()
         }
@@ -343,12 +459,14 @@ class AppViewModel : ViewModel() {
             try {
                 val repo: RepoEntry = sources.addRepo(url)
                 syncRepos()
+                Logger.i("Repo", "${repo.name} eklendi (${repo.sources.size} kaynak)")
                 toast("${repo.name} eklendi · ${repo.sources.size} kaynak")
                 if (selected == null || repo.sources.size == 1) repo.sources.firstOrNull()?.let { select(it) }
                 onDone(true)
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
+                Logger.e("Repo", "Eklenemedi: $url", t)
                 toast("Eklenemedi: ${t.message}")
                 onDone(false)
             } finally {
@@ -363,14 +481,34 @@ class AppViewModel : ViewModel() {
             try {
                 val r = sources.refresh(url)
                 syncRepos()
-                toast("${r.name} güncellendi")
+                toast("${r.name} güncellendi · ${r.sources.size} kaynak")
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
+                Logger.e("Repo", "Güncellenemedi: $url", t)
                 toast("Güncellenemedi: ${t.message}")
             } finally {
                 repoBusy = false
             }
+        }
+    }
+
+    fun refreshAllRepos(silent: Boolean = false) {
+        repoBusy = true
+        viewModelScope.launch {
+            var ok = 0
+            store.repos.forEach { r ->
+                try {
+                    sources.refresh(r.url); ok++
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (t: Throwable) {
+                    Logger.e("Repo", "Güncellenemedi: ${r.url}", t)
+                }
+            }
+            syncRepos()
+            repoBusy = false
+            if (!silent) toast("$ok/${store.repos.size} repo güncellendi")
         }
     }
 
@@ -381,8 +519,104 @@ class AppViewModel : ViewModel() {
 
     suspend fun nuvioScrapers(entry: SourceEntry): List<NuvioScraper> = sources.nuvioSource(entry).scrapers()
 
+    /** Eklentiyi indirip yükler (Ayarlar > Eklentiler > Test) */
+    fun testSource(entry: SourceEntry, onDone: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                sources.open(entry)
+                toast("${entry.name} yüklendi")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                toast(t.message ?: "Yüklenemedi")
+            } finally {
+                onDone()
+            }
+        }
+    }
+
+    fun toggleSourceHidden(key: String) = updatePrefs {
+        hiddenSources = if (key in hiddenSources) hiddenSources - key else hiddenSources + key
+    }
+
+    fun toggleSourcePinned(key: String) = updatePrefs {
+        pinnedSources = if (key in pinnedSources) pinnedSources - key else pinnedSources + key
+    }
+
     fun settingsChanged() {
-        // TMDB anahtarı vb. değişince Nuvio ana sayfasını yenile
-        if (selected?.type == com.repoplayer.app.data.RepoType.NUVIO && rows.isEmpty()) loadHome()
+        if (selected?.type == RepoType.NUVIO && rows.isEmpty()) loadHome(force = true)
+    }
+
+    // ---------- Yedekleme ----------
+    fun exportBackup(): String = store.exportAll()
+
+    fun importBackup(text: String) {
+        try {
+            val n = store.importAll(text)
+            ui = UiPrefs.from(store)
+            repos = store.repos
+            entries = sources.entries()
+            history = store.history
+            favorites = store.favorites
+            selected = entries.firstOrNull { it.key == store.selectedSource } ?: entries.firstOrNull()
+            loadHome(force = true)
+            toast("Yedek geri yüklendi ($n ayar)")
+        } catch (t: Throwable) {
+            toast("Yedek okunamadı: ${t.message}")
+        }
+    }
+
+    // ---------- Güncelleme ----------
+    var update by mutableStateOf<UpdateInfo?>(null)
+        private set
+    var checkingUpdate by mutableStateOf(false)
+        private set
+
+    fun checkUpdate(silent: Boolean = false) {
+        checkingUpdate = true
+        viewModelScope.launch {
+            try {
+                val rel = Net.jsonTree("https://api.github.com/repos/$GITHUB_REPO/releases/latest")
+                val tag = rel.str("tag_name")?.removePrefix("v") ?: throw IllegalStateException("Sürüm bulunamadı")
+                val apk = rel.get("assets")?.firstOrNull { it.str("name")?.endsWith(".apk") == true }?.str("browser_download_url")
+                    ?: rel.str("html_url") ?: ""
+                if (isNewer(tag, app.versionName)) {
+                    update = UpdateInfo(tag, apk, rel.str("body"))
+                    if (!silent) toast("Yeni sürüm: v$tag")
+                } else {
+                    update = null
+                    if (!silent) toast("Uygulama güncel (v${app.versionName})")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                if (!silent) toast("Güncelleme denetlenemedi: ${t.message}")
+            } finally {
+                checkingUpdate = false
+            }
+        }
+    }
+
+    private fun isNewer(remote: String, local: String): Boolean {
+        val r = remote.split('.', '-').mapNotNull { it.toIntOrNull() }
+        val l = local.split('.', '-').mapNotNull { it.toIntOrNull() }
+        for (i in 0 until maxOf(r.size, l.size)) {
+            val a = r.getOrElse(i) { 0 }
+            val b = l.getOrElse(i) { 0 }
+            if (a != b) return a > b
+        }
+        return false
+    }
+
+    fun clearCaches(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            HomeCache.clear()
+            context.cacheDir.listFiles()?.forEach { it.deleteRecursively() }
+            main.post { toast("Önbellek temizlendi") }
+        }
+    }
+
+    companion object {
+        const val GITHUB_REPO = "darknesslord19/Repoplayer"
     }
 }

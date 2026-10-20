@@ -22,6 +22,7 @@ import com.repoplayer.app.data.ContentItem
 import com.repoplayer.app.data.Details
 import com.repoplayer.app.data.Episode
 import com.repoplayer.app.data.Kind
+import com.repoplayer.app.data.Logger
 import com.repoplayer.app.data.Net
 import com.repoplayer.app.data.RepoEntry
 import com.repoplayer.app.data.RepoType
@@ -102,41 +103,74 @@ object Cs3Repo {
     }
 }
 
+/** Bir eklentinin yükleme durumu (Ayarlar > Eklentiler'de gösterilir) */
+data class PluginStatus(
+    val state: State,
+    val message: String? = null,
+    val apis: List<String> = emptyList(),
+    val hasSettings: Boolean = false,
+) {
+    enum class State { LOADING, LOADED, FAILED }
+}
+
 /** .cs3 dosyalarını indirip CloudStream eklentisi olarak yükler */
 object Cs3Loader {
+    private const val TAG = "Cs3Loader"
     private val mutex = Mutex()
     private val loaded = HashMap<String, List<MainAPI>>()
+    private val plugins = HashMap<String, BasePlugin>()
+    private val statuses = java.util.concurrent.ConcurrentHashMap<String, PluginStatus>()
+
+    fun status(key: String): PluginStatus? = statuses[key]
+
+    fun plugin(key: String): BasePlugin? = plugins[key]
 
     private fun md5(s: String): String =
         MessageDigest.getInstance("MD5").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }.take(12)
 
+    fun pluginsDir(context: Context) = File(context.filesDir, "plugins")
+
     suspend fun load(context: Context, entry: SourceEntry): List<MainAPI> = mutex.withLock {
         loaded[entry.key]?.let { return it }
-        val dir = File(context.filesDir, "plugins/${md5(entry.repoUrl)}")
-        val safe = entry.internalName.replace(Regex("[^A-Za-z0-9_.-]"), "_")
-        val file = File(dir, "$safe.cs3")
-        val versionFile = File(dir, "$safe.version")
-        val wanted = "${entry.version}|${entry.url}"
+        statuses[entry.key] = PluginStatus(PluginStatus.State.LOADING)
+        try {
+            val dir = File(pluginsDir(context), md5(entry.repoUrl))
+            val safe = entry.internalName.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+            val file = File(dir, "$safe.cs3")
+            val versionFile = File(dir, "$safe.version")
+            val wanted = "${entry.version}|${entry.url}"
 
-        withContext(Dispatchers.IO) {
-            val have = runCatching { versionFile.readText() }.getOrNull()
-            if (!file.exists() || have != wanted) {
-                Net.download(entry.url, file)
-                versionFile.writeText(wanted)
+            withContext(Dispatchers.IO) {
+                val have = runCatching { versionFile.readText() }.getOrNull()
+                if (!file.exists() || file.length() == 0L || have != wanted) {
+                    Logger.i(TAG, "${entry.name} indiriliyor (v${entry.version})")
+                    Net.download(entry.url, file)
+                    versionFile.writeText(wanted)
+                }
+                // Android 14+: dinamik kod dosyası salt okunur olmalı
+                runCatching { file.setReadOnly() }
             }
-            // Android 14+: dinamik kod dosyası salt okunur olmalı
-            runCatching { file.setReadOnly() }
-        }
 
-        val apis = withContext(Dispatchers.IO) { loadFile(context, file) }
-        if (apis.isEmpty()) throw IllegalStateException("${entry.name}: eklenti hiçbir kaynak kaydetmedi")
-        loaded[entry.key] = apis
-        apis
+            val (instance, apis) = withContext(Dispatchers.IO) { loadFile(context, file) }
+            if (apis.isEmpty()) throw IllegalStateException("eklenti hiçbir kaynak kaydetmedi")
+            loaded[entry.key] = apis
+            plugins[entry.key] = instance
+            statuses[entry.key] = PluginStatus(
+                PluginStatus.State.LOADED,
+                apis = apis.map { "${it.name} (${it.mainUrl})" },
+                hasSettings = (instance as? Plugin)?.openSettings != null,
+            )
+            Logger.i(TAG, "${entry.name} yüklendi: ${apis.joinToString { it.name }}")
+            apis
+        } catch (t: Throwable) {
+            statuses[entry.key] = PluginStatus(PluginStatus.State.FAILED, t.message ?: t.javaClass.simpleName)
+            Logger.e(TAG, "${entry.name} yüklenemedi", t)
+            throw IllegalStateException("${entry.name} yüklenemedi: ${t.message ?: t.javaClass.simpleName}", t)
+        }
     }
 
-    private fun loadFile(context: Context, file: File): List<MainAPI> {
+    private fun loadFile(context: Context, file: File): Pair<BasePlugin, List<MainAPI>> {
         val path = file.absolutePath
-        APIHolder.allProviders.filter { it.sourcePlugin == path }.takeIf { it.isNotEmpty() }?.let { return it }
 
         val loader = PathClassLoader(path, context.classLoader)
         val manifestText = loader.getResourceAsStream("manifest.json")?.use { it.reader().readText() }
@@ -157,8 +191,15 @@ object Cs3Loader {
             }
         }
 
+        // Aynı dosya daha önce yüklendiyse eski kayıtları temizle
+        APIHolder.allProviders.removeAll { it.sourcePlugin == path }
         if (instance is Plugin) instance.load(context) else instance.load()
-        return APIHolder.allProviders.filter { it.sourcePlugin == path }
+        return instance to APIHolder.allProviders.filter { it.sourcePlugin == path }
+    }
+
+    /** İndirilen tüm eklentileri siler (bir sonraki açılışta yeniden indirilir) */
+    fun clearCache(context: Context) {
+        pluginsDir(context).walkBottomUp().forEach { it.setWritable(true); it.delete() }
     }
 }
 
@@ -192,27 +233,42 @@ class Cs3Source(override val entry: SourceEntry, private val apis: List<MainAPI>
     )
 
     override fun home(): Flow<Row> = channelFlow {
-        val gate = Semaphore(4)
+        val gate = Semaphore(com.repoplayer.app.App.instance.store.parallelRequests.coerceIn(1, 12))
+        val sent = java.util.concurrent.atomic.AtomicInteger(0)
+        val lastError = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+        val jobs = mutableListOf<kotlinx.coroutines.Job>()
         var order = 0
         apis.forEachIndexed { apiIndex, api ->
             if (!api.hasMainPage) return@forEachIndexed
             api.mainPage.forEach { page ->
                 val myOrder = (order++) * 100
-                launch(Dispatchers.IO) {
+                jobs += launch(Dispatchers.IO) {
                     gate.withPermit {
-                        runCatching {
-                            val res = api.getMainPage(1, MainPageRequest(page.name, page.data, page.horizontalImages))
-                            res?.items?.forEachIndexed { i, list ->
-                                if (list.list.isEmpty()) return@forEachIndexed
-                                val key = if (res.hasNext || page.data.isNotBlank())
-                                    listOf(apiIndex.toString(), page.name, page.data, page.horizontalImages.toString(), list.name)
-                                        .joinToString(SEP) else null
-                                send(list.toRow(apiIndex, key, myOrder + i))
-                            }
-                        }.onFailure { Log.e(TAG, "Ana sayfa satırı yüklenemedi: ${page.name}", it) }
+                        val res = try {
+                            api.getMainPage(1, MainPageRequest(page.name, page.data, page.horizontalImages))
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (t: Throwable) {
+                            lastError.set(t)
+                            Logger.e(TAG, "${entry.name}: \"${page.name}\" satırı yüklenemedi", t)
+                            null
+                        }
+                        res?.items?.forEachIndexed { i, list ->
+                            if (list.list.isEmpty()) return@forEachIndexed
+                            val key = if (res.hasNext || page.data.isNotBlank())
+                                listOf(apiIndex.toString(), page.name, page.data, page.horizontalImages.toString(), list.name)
+                                    .joinToString(SEP) else null
+                            send(list.toRow(apiIndex, key, myOrder + i))
+                            sent.incrementAndGet()
+                        }
                     }
                 }
             }
+        }
+        jobs.forEach { it.join() }
+        val err = lastError.get()
+        if (sent.get() == 0 && err != null) {
+            throw IllegalStateException("${entry.name} ana sayfası alınamadı: ${err.message ?: err.javaClass.simpleName}", err)
         }
     }
 

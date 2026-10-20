@@ -30,6 +30,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -73,12 +75,24 @@ val AppColors = darkColorScheme(
 fun AppTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme = AppColors, content = content)
 
 /** TV kumandası ile gezinirken odaklanan öğeyi turkuaz çerçeveyle belirtir */
-fun Modifier.focusFrame(shape: Shape = RoundedCornerShape(12.dp)): Modifier = composed {
+fun Modifier.focusFrame(shape: Shape = RoundedCornerShape(12.dp), grow: Boolean = false): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
     this
         .onFocusChanged { focused = it.isFocused || it.hasFocus }
-        .border(if (focused) 2.dp else 0.dp, if (focused) Accent else Color.Transparent, shape)
+        .then(if (grow && focused) Modifier.scale(1.07f) else Modifier)
+        .border(if (focused) 2.5.dp else 0.dp, if (focused) Accent else Color.Transparent, shape)
 }
+
+/** Görünüm ayarları (afiş boyutu, rozetler...) tüm ekranlara buradan ulaşır */
+val LocalUi = compositionLocalOf<UiPrefs?> { null }
+
+/** Bitirilmiş içerikler: "kaynakKey|id" */
+val LocalWatched = compositionLocalOf<Set<String>> { emptySet() }
+
+/** Yan menü (TV/tablet) etkin mi */
+val LocalRail = compositionLocalOf { false }
+
+fun posterWidth(size: Int?): Dp = when (size) { 0 -> 96.dp; 2 -> 150.dp; else -> 120.dp }
 
 @Composable
 fun Poster(url: String?, title: String, modifier: Modifier = Modifier) {
@@ -98,8 +112,8 @@ fun Poster(url: String?, title: String, modifier: Modifier = Modifier) {
 fun PosterCard(
     item: ContentItem,
     onClick: () -> Unit,
-    /** null: bulunduğu hücreyi doldurur (ızgara) */
-    width: Dp? = 120.dp,
+    /** null: bulunduğu hücreyi doldurur (ızgara); varsayılan: ayardaki afiş boyutu */
+    width: Dp? = posterWidth(LocalUi.current?.posterSize),
     horizontal: Boolean = false,
     progress: Float? = null,
     subtitle: String? = null,
@@ -107,19 +121,31 @@ fun PosterCard(
     Column(
         Modifier
             .then(if (width == null) Modifier.fillMaxWidth() else Modifier.width(if (horizontal) width * 1.6f else width))
+            .focusFrame(grow = true)
             .clip(RoundedCornerShape(12.dp))
-            .focusFrame()
             .clickable(onClick = onClick)
     ) {
+        val ui = LocalUi.current
+        val watched = ui?.badgeWatched != false && "${item.sourceKey}|${item.id}" in LocalWatched.current
         Box {
             Poster(item.poster, item.title, Modifier.fillMaxWidth().aspectRatio(if (horizontal) 16f / 9f else 2f / 3f))
-            if (progress != null && progress > 0f) {
+            if (watched) {
+                Box(Modifier.align(Alignment.TopEnd).padding(6.dp).clip(RoundedCornerShape(50)).background(Accent).padding(horizontal = 6.dp, vertical = 1.dp)) {
+                    Text("✓", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            if (ui?.badgeYear == true && item.year != null) {
+                Box(Modifier.align(Alignment.TopStart).padding(6.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xCC000000)).padding(horizontal = 5.dp, vertical = 1.dp)) {
+                    Text("${item.year}", color = Color.White, fontSize = 10.sp)
+                }
+            }
+            if (progress != null && progress > 0f && ui?.badgeProgress != false) {
                 Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0x66000000))) {
                     Box(Modifier.fillMaxWidth(progress).height(4.dp).background(Accent))
                 }
             }
         }
-        Text(
+        if (ui?.showTitles != false) Text(
             item.title, Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp),
             color = Color.White, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 16.sp,
         )
@@ -148,7 +174,7 @@ fun RowHeader(title: String, onMore: (() -> Unit)?) {
 @Composable
 fun ContentRowView(row: ContentRow, onItem: (ContentItem) -> Unit, onMore: (() -> Unit)?) {
     RowHeader(row.title, onMore)
-    LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyRow(contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         items(row.items) { item ->
             PosterCard(item, { onItem(item) }, horizontal = row.horizontal)
         }
