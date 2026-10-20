@@ -1,0 +1,71 @@
+name: APK derle
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # .cs3 eklentilerini çalıştıran CloudStream kütüphanesinin sabitlenmiş sürümü.
+  # Güncellemek için bu commit'i değiştirin.
+  CS_REF: eb962b4fb7b1387b8de42ec58000cee0a01fe741
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Nuvio JS kütüphanelerini paketle ve test et
+        working-directory: js
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npm test
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: CloudStream kütüphanesini indir
+        run: |
+          git clone --filter=blob:none https://github.com/recloudstream/cloudstream.git cs
+          git -C cs checkout "$CS_REF"
+
+      - name: Player modülünü yerleştir
+        run: |
+          cp -r player cs/player
+          printf '\ninclude(":player")\n' >> cs/settings.gradle.kts
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: APK derle
+        working-directory: cs
+        run: ./gradlew :player:assembleRelease --stacktrace
+
+      - name: APK'yı hazırla
+        run: |
+          mkdir -p out
+          cp cs/player/build/outputs/apk/release/*.apk "out/RepoPlayer-${{ github.run_number }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RepoPlayer-apk
+          path: out/*.apk
+
+      - name: Sürüm yayınla
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.apk

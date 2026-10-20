@@ -1,0 +1,9 @@
+/cs/
+/out/
+js/node_modules/
+player/build/
+player/src/main/assets/js/libs.js
+.gradle/
+.idea/
+local.properties
+*.iml
