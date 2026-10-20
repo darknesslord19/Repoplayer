@@ -71,6 +71,19 @@ jobs:
           done
           ls -la jars
 
+      - name: Eklenti kaynaklarını çöz (jadx)
+        continue-on-error: true
+        run: |
+          curl -sL -o jadx.zip https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip
+          unzip -q jadx.zip -d jadx && chmod +x jadx/bin/jadx
+          mkdir -p src-out
+          for f in cs3/*.cs3; do
+            n=$(basename "$f" .cs3)
+            ./jadx/bin/jadx -q --no-res --no-imports=false -d "dec/$n" "tmp/$n/classes.dex" >/dev/null 2>&1 || true
+            find "dec/$n" -name '*.java' -path '*manitux*' -exec cat {} + > "src-out/$n.java.txt" 2>/dev/null || true
+          done
+          ls -la src-out
+
       - name: CloudStream kütüphanesini indir
         run: |
           git clone --filter=blob:none https://github.com/recloudstream/cloudstream.git cs
@@ -93,6 +106,7 @@ jobs:
         run: |
           mkdir -p report && cp -f *-report.md *-console.log report/ 2>/dev/null || true
           ls -la jars > report/jars.txt 2>&1 || true
+          mkdir -p report/src && cp -f src-out/*.txt report/src/ 2>/dev/null || true
           cd report
           git init -q && git checkout -q -b diag-report
           git config user.name "github-actions" && git config user.email "actions@github.com"
