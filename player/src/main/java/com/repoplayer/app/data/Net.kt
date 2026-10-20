@@ -37,6 +37,9 @@ class HttpResult(
     val url: String,
     val headers: Map<String, String>,
     val body: String,
+    /** Metin olmayan yanıtlar için ham içerik (base64) */
+    val bodyBase64: String? = null,
+    val redirected: Boolean = false,
 )
 
 /** DNS-over-HTTPS sağlayıcıları (İSS engellerini aşmak için) */
@@ -92,6 +95,10 @@ object Net {
             .build()
     }
 
+    private val noRedirectClient: OkHttpClient by lazy {
+        client.newBuilder().followRedirects(false).followSslRedirects(false).build()
+    }
+
     /** SSL denetimi yapmayan istemci (yalnızca eklentilerin insecureApp'i için) */
     val insecureClient: OkHttpClient by lazy {
         val trustAll = object : X509TrustManager {
@@ -128,6 +135,7 @@ object Net {
         method: String = "GET",
         headers: Map<String, String> = emptyMap(),
         body: String? = null,
+        followRedirects: Boolean = true,
     ): HttpResult = withContext(Dispatchers.IO) {
         val builder = Request.Builder().url(url)
         var hasUa = false
@@ -145,13 +153,20 @@ object Net {
             else -> null
         }
         builder.method(m, reqBody)
-        client.newCall(builder.build()).execute().use { resp ->
+        val c = if (followRedirects) client else noRedirectClient
+        val req = builder.build()
+        c.newCall(req).execute().use { resp ->
+            val type = resp.header("Content-Type")?.lowercase() ?: ""
+            val isText = type.isEmpty() || listOf("text", "json", "xml", "javascript", "html", "mpegurl", "x-www-form", "vtt", "srt").any { it in type }
+            val bytes = resp.body?.bytes() ?: ByteArray(0)
             HttpResult(
                 code = resp.code,
                 message = resp.message,
                 url = resp.request.url.toString(),
                 headers = resp.headers.toMultimap().mapValues { it.value.joinToString(", ") },
-                body = resp.body?.string() ?: "",
+                body = if (isText) String(bytes, resp.body?.contentType()?.charset() ?: Charsets.UTF_8) else String(bytes, Charsets.ISO_8859_1),
+                bodyBase64 = if (isText) null else android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP),
+                redirected = resp.request.url.toString() != req.url.toString(),
             )
         }
     }

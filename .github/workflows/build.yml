@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, master]
     tags: ['v*']
+    paths-ignore: ['diag/**', 'js/diag/**', '.github/workflows/diagnose.yml']
   pull_request:
   workflow_dispatch:
 

@@ -1,0 +1,96 @@
+name: Teşhis
+
+# Eklentileri gerçek sitelere karşı çalıştırır, sonuçları "diag-report" dalına yazar.
+on:
+  workflow_dispatch:
+    inputs:
+      cs3_repo:
+        description: CloudStream repo.json adresi
+        default: https://raw.githubusercontent.com/manitux-app/cs-plugins/main/repo.json
+      nuvio_manifest:
+        description: Nuvio manifest.json adresi
+        default: https://raw.githubusercontent.com/manitux-app/nuvio-plugins/refs/heads/main/manifest.json
+  push:
+    branches: [main]
+    paths: ['diag/**', 'js/diag/**', '.github/workflows/diagnose.yml']
+
+permissions:
+  contents: write
+
+env:
+  CS_REF: eb962b4fb7b1387b8de42ec58000cee0a01fe741
+  CS3_REPO: ${{ github.event.inputs.cs3_repo || 'https://raw.githubusercontent.com/manitux-app/cs-plugins/main/repo.json' }}
+  NUVIO_MANIFEST: ${{ github.event.inputs.nuvio_manifest || 'https://raw.githubusercontent.com/manitux-app/nuvio-plugins/refs/heads/main/manifest.json' }}
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Nuvio sağlayıcılarını dene
+        working-directory: js
+        continue-on-error: true
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          timeout 1500 node diag/nuvio-diag.js "$NUVIO_MANIFEST" ../nuvio-report.md || true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: CS3 eklentilerini indir ve jar'a çevir
+        run: |
+          mkdir -p cs3 jars
+          python3 - <<'PY'
+          import json, os, urllib.request, urllib.parse
+          repo = os.environ["CS3_REPO"]
+          r = json.load(urllib.request.urlopen(repo))
+          lists = r["pluginLists"] if isinstance(r, dict) else [repo]
+          for lst in lists:
+              lst = urllib.parse.urljoin(repo, lst)
+              for p in json.load(urllib.request.urlopen(lst)):
+                  if p.get("status", 1) == 0: continue
+                  url = urllib.parse.urljoin(lst, p["url"])
+                  urllib.request.urlretrieve(url, "cs3/" + p["internalName"] + ".cs3")
+                  print("indirildi", p["internalName"])
+          PY
+          curl -sL -o d2j.zip https://github.com/pxb1988/dex2jar/releases/download/v2.4/dex-tools-v2.4.zip
+          unzip -q d2j.zip -d d2j
+          D2J=$(find d2j -name d2j-dex2jar.sh | head -1); chmod +x d2j/*/*.sh
+          for f in cs3/*.cs3; do
+            n=$(basename "$f" .cs3); mkdir -p "tmp/$n"; unzip -q -o "$f" 'classes*.dex' -d "tmp/$n"
+            "$D2J" -f -o "jars/$n.jar" "tmp/$n/classes.dex" >/dev/null 2>&1 || echo "dex2jar başarısız: $n"
+          done
+          ls -la jars
+
+      - name: CloudStream kütüphanesini indir
+        run: |
+          git clone --filter=blob:none https://github.com/recloudstream/cloudstream.git cs
+          git -C cs checkout "$CS_REF"
+          cp -r diag/cs3 cs/diag
+          printf '\ninclude(":diag")\n' >> cs/settings.gradle.kts
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: CS3 eklentilerini dene
+        working-directory: cs
+        continue-on-error: true
+        run: timeout 2400 ./gradlew :diag:run --no-configuration-cache --args="$GITHUB_WORKSPACE/cs3 $GITHUB_WORKSPACE/jars $GITHUB_WORKSPACE/cs3-report.md" || true
+
+      - name: Raporları diag-report dalına yaz
+        if: always()
+        run: |
+          mkdir -p report && cp -f *-report.md report/ 2>/dev/null || true
+          cd report
+          git init -q && git checkout -q -b diag-report
+          git config user.name "github-actions" && git config user.email "actions@github.com"
+          git add -A && git commit -q -m "Teşhis raporu ${{ github.run_number }}" || exit 0
+          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" diag-report

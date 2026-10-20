@@ -85,25 +85,42 @@ object JsEngine {
      * @param key sağlayıcı kimliği+sürümü; aynı anahtar için kod bir kez derlenir.
      * @return getStreams'in döndürdüğü dizi
      */
-    suspend fun getStreams(key: String, code: String, args: List<Any?>, timeoutMs: Long): JsonNode {
+    /**
+     * Sağlayıcının bir fonksiyonunu çağırır (getStreams, getCatalog, search, comments).
+     * @param key sağlayıcı kimliği+sürümü; aynı anahtar için kod bir kez derlenir.
+     * @return fonksiyonun döndürdüğü değer (yoksa NullNode)
+     */
+    suspend fun call(
+        key: String,
+        code: String,
+        function: String,
+        args: List<Any?>,
+        timeoutMs: Long,
+        scraperId: String? = null,
+        tmdbKey: String? = null,
+    ): JsonNode {
         ensure()
         val runId = UUID.randomUUID().toString()
         val done = CompletableDeferred<String>()
         runs[runId] = done
         codes[runId] = code
         try {
-            val call = "__rp.run(${JSONObject.quote(runId)}, ${JSONObject.quote(key)}, ${args.toJson()})"
+            val ctx = mapOf("scraperId" to scraperId, "tmdbKey" to tmdbKey?.takeIf { it.isNotBlank() }).toJson()
+            val call = "__rp.call(${JSONObject.quote(runId)}, ${JSONObject.quote(key)}, ${JSONObject.quote(function)}, ${args.toJson()}, $ctx)"
             withContext(Dispatchers.Main) { webView?.evaluateJavascript(call, null) }
             val result = json.readTree(withTimeout(timeoutMs) { done.await() })
             if (result.get("ok")?.asBoolean() != true) {
                 throw IllegalStateException(result.str("value") ?: "Bilinmeyen JS hatası")
             }
-            return result.get("value") ?: json.createArrayNode()
+            return result.get("value") ?: json.nullNode()
         } finally {
             runs.remove(runId)
             codes.remove(runId)
         }
     }
+
+    suspend fun getStreams(key: String, code: String, args: List<Any?>, timeoutMs: Long, scraperId: String? = null, tmdbKey: String? = null): JsonNode =
+        call(key, code, "getStreams", args, timeoutMs, scraperId, tmdbKey).takeIf { it.isArray } ?: json.createArrayNode()
 
     private fun js(script: String) = main.post { webView?.evaluateJavascript(script, null) }
 
@@ -121,6 +138,7 @@ object JsEngine {
                         method = r.str("method") ?: "GET",
                         headers = headers,
                         body = r.get("body")?.takeIf { !it.isNull }?.asText(),
+                        followRedirects = r.get("followRedirects")?.asBoolean() ?: true,
                     )
                     mapOf(
                         "status" to res.code,
@@ -128,6 +146,8 @@ object JsEngine {
                         "url" to res.url,
                         "headers" to res.headers,
                         "body" to res.body,
+                        "bodyBase64" to res.bodyBase64,
+                        "redirected" to res.redirected,
                     ).toJson()
                 } catch (t: Throwable) {
                     mapOf("error" to (t.message ?: t.javaClass.simpleName)).toJson()

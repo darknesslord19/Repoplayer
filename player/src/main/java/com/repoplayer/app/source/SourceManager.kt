@@ -11,6 +11,7 @@ import com.repoplayer.app.data.json
 import com.repoplayer.app.source.cs3.Cs3Loader
 import com.repoplayer.app.source.cs3.Cs3Repo
 import com.repoplayer.app.source.cs3.Cs3Source
+import com.repoplayer.app.source.nuvio.NuvioCatalogSource
 import com.repoplayer.app.source.nuvio.NuvioRepo
 import com.repoplayer.app.source.nuvio.NuvioSource
 import com.repoplayer.app.source.stremio.StremioRepo
@@ -74,7 +75,7 @@ class SourceManager(private val context: Context, val store: Store) {
     suspend fun open(entry: SourceEntry): ContentSource = lock.withLock {
         cache[entry.key] ?: when (entry.type) {
             RepoType.CS3 -> Cs3Source(entry, Cs3Loader.load(context, entry))
-            RepoType.NUVIO -> NuvioSource(entry, store, context)
+            RepoType.NUVIO -> if (entry.internalName.isNotBlank()) NuvioCatalogSource(entry, store, context) else NuvioSource(entry, store, context)
             RepoType.STREMIO -> StremioSource(entry)
         }.also { cache[entry.key] = it }
     }

@@ -8,6 +8,9 @@
   g.global = g;
   if (typeof g.globalThis === 'undefined') g.globalThis = g;
   if (!g.SCRAPER_SETTINGS) g.SCRAPER_SETTINGS = {};
+  if (typeof g.self === 'undefined') g.self = g;
+  g.Nuvio = g.Nuvio || {};
+  g.Nuvio.showMessage = function (message, title) { try { g.NativeBridge.log('[mesaj] ' + (title ? title + ': ' : '') + message); } catch (e) {} };
 
   var libs = g.__rpLibs || {};
   var pending = {};
@@ -43,17 +46,19 @@
       status: r.status,
       statusText: r.statusText || '',
       url: r.url,
-      redirected: false,
+      redirected: !!r.redirected,
       headers: new RPHeaders(r.headers || {}),
       text: function () { return Promise.resolve(body); },
       json: function () {
         return new Promise(function (res, rej) { try { res(JSON.parse(body)); } catch (e) { rej(e); } });
       },
       arrayBuffer: function () {
-        var buf = new Uint8Array(body.length);
-        for (var i = 0; i < body.length; i++) buf[i] = body.charCodeAt(i) & 0xff;
+        var bin = r.bodyBase64 ? atob(r.bodyBase64) : body;
+        var buf = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i) & 0xff;
         return Promise.resolve(buf.buffer);
       },
+      blob: function () { return this.arrayBuffer(); },
       clone: function () { return makeResponse(r); }
     };
   }
@@ -99,7 +104,8 @@
         url: url,
         method: (init.method || 'GET').toUpperCase(),
         headers: headers,
-        body: body == null ? null : body
+        body: body == null ? null : body,
+        followRedirects: init.redirect !== 'manual'
       }));
     });
   }
@@ -199,6 +205,40 @@
   }
 
   function errText(e) { return String((e && (e.stack || e.message)) || e); }
+
+  function loadModule(runId, key) {
+    var mod = rp.modules[key];
+    if (!mod) {
+      var code = g.NativeBridge.code(runId);
+      var module = { exports: {} };
+      var fn = new Function('module', 'exports', 'require', code);
+      fn(module, module.exports, rpRequire);
+      mod = rp.modules[key] = module.exports;
+    }
+    return mod;
+  }
+
+  /**
+   * Genel çağrı: getCatalog / search / getStreams / comments.
+   * ctx: { scraperId, settings, tmdbKey }
+   */
+  rp.call = function (runId, key, fnName, args, ctx) {
+    try {
+      ctx = ctx || {};
+      g.SCRAPER_ID = ctx.scraperId || g.SCRAPER_ID;
+      g.SCRAPER_SETTINGS = ctx.settings || g.SCRAPER_SETTINGS || {};
+      if (ctx.tmdbKey) g.TMDB_API_KEY = ctx.tmdbKey;
+      var mod = loadModule(runId, key);
+      var f = mod[fnName] || (mod.default && mod.default[fnName]) || g[fnName];
+      if (typeof f !== 'function') { done(runId, true, null); return; }
+      Promise.resolve(f.apply(null, args)).then(
+        function (r) { done(runId, true, r === undefined ? null : r); },
+        function (e) { done(runId, false, errText(e)); }
+      );
+    } catch (e) {
+      done(runId, false, errText(e));
+    }
+  };
 
   /** key: sağlayıcı kimliği + sürüm; kod gerekirse NativeBridge.code ile alınır */
   rp.run = function (runId, key, args) {

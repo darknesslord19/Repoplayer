@@ -135,3 +135,56 @@ object OpenSubs {
         "por", "pob" -> "Portekizce"; "jpn" -> "Japonca"; else -> code
     }
 }
+
+/** Cinemeta (Stremio) — anahtarsız film/dizi bilgisi ve bölüm listesi */
+object Cinemeta {
+    private const val BASE = "https://v3-cinemeta.strem.io"
+
+    private fun enc(s: String) = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
+
+    private fun norm(s: String) = s.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+
+    /** Ada (ve yıla) göre IMDb kimliği bulur */
+    suspend fun findImdb(name: String, series: Boolean, year: Int?): String? {
+        val type = if (series) "series" else "movie"
+        val metas = Net.jsonTree("$BASE/catalog/$type/top/search=${enc(name)}.json").get("metas") ?: return null
+        val list = metas.mapNotNull { m ->
+            val id = m.str("imdb_id") ?: m.str("id") ?: return@mapNotNull null
+            Triple(id, m.str("name") ?: "", m.str("releaseInfo")?.take(4)?.toIntOrNull())
+        }.filter { it.first.startsWith("tt") }
+        val n = norm(name)
+        return (list.firstOrNull { norm(it.second) == n && (year == null || it.third == null || kotlin.math.abs(it.third!! - year) <= 1) }
+            ?: list.firstOrNull { year != null && it.third == year }
+            ?: list.firstOrNull { norm(it.second) == n }
+            ?: list.firstOrNull())?.first
+    }
+
+    suspend fun details(item: ContentItem, imdb: String, series: Boolean): Details {
+        val type = if (series) "series" else "movie"
+        val m = Net.jsonTree("$BASE/meta/$type/$imdb.json").get("meta") ?: throw IllegalStateException("Cinemeta: kayıt yok")
+        val episodes = m.get("videos")?.mapNotNull { v ->
+            val s = v.int("season") ?: return@mapNotNull null
+            val e = v.int("episode") ?: v.int("number") ?: return@mapNotNull null
+            Episode(
+                id = "$s:$e",
+                name = "S${s}B$e · " + (v.str("name") ?: v.str("title") ?: "Bölüm $e"),
+                season = s,
+                episode = e,
+                poster = v.str("thumbnail"),
+                description = v.str("overview") ?: v.str("description"),
+            )
+        }?.sortedWith(compareBy({ if (it.season == 0) 9999 else it.season ?: 1 }, { it.episode ?: 0 })) ?: emptyList()
+        return Details(
+            item = item,
+            title = item.title.ifBlank { m.str("name") ?: "" },
+            poster = m.str("poster"),
+            backdrop = m.str("background"),
+            plot = m.str("description"),
+            year = m.str("releaseInfo")?.take(4)?.toIntOrNull() ?: item.year,
+            tags = m.get("genres")?.map { it.asText() } ?: emptyList(),
+            episodes = if (series) episodes else emptyList(),
+            playId = if (series) null else item.id,
+            imdbId = imdb,
+        )
+    }
+}
