@@ -41,6 +41,26 @@ jobs:
           npm run build
           timeout 1500 node diag/nuvio-diag.js "$NUVIO_MANIFEST" ../nuvio-report.md 2>&1 | tee ../nuvio-console.log || true
 
+      - name: Stremio eklentisi uç noktaları
+        continue-on-error: true
+        run: |
+          B=https://sine-wix.vercel.app
+          {
+            for u in "$B/manifest.json" "$B/catalog/movie/sw-latest-movies.json" "$B/catalog/series/sw-latest-series.json" "$B/catalog/series/sw-latest-episodes.json" "$B/catalog/movie/sw-search-movie/search=kurt.json" "$B/catalog/movie/sw-latest-movies/skip=0.json"; do
+              echo "### $u"
+              curl -s -m 40 -A "Mozilla/5.0" -w '\n[HTTP %{http_code}, %{time_total}s]\n' "$u" | head -c 1500
+              echo
+            done
+            ID=$(curl -s -m 40 "$B/catalog/series/sw-latest-series.json" | python3 -c "import sys,json;m=json.load(sys.stdin).get('metas',[]);print(m[0]['id'] if m else '')" 2>/dev/null)
+            echo "ilk id: $ID"
+            if [ -n "$ID" ]; then
+              echo "### meta"; curl -s -m 40 "$B/meta/series/$ID.json" | head -c 1500; echo
+              EP=$(curl -s -m 40 "$B/meta/series/$ID.json" | python3 -c "import sys,json;v=json.load(sys.stdin)['meta'].get('videos',[]);print(v[0]['id'] if v else '')" 2>/dev/null)
+              echo "### stream $EP"; curl -s -m 60 "$B/stream/series/$EP.json" | head -c 2000; echo
+            fi
+          } > stremio-report.md 2>&1 || true
+          cat stremio-report.md | head -100
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
