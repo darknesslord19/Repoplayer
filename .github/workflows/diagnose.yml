@@ -39,7 +39,7 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           npm run build
-          timeout 1500 node diag/nuvio-diag.js "$NUVIO_MANIFEST" ../nuvio-report.md || true
+          timeout 1500 node diag/nuvio-diag.js "$NUVIO_MANIFEST" ../nuvio-report.md 2>&1 | tee ../nuvio-console.log || true
 
       - uses: actions/setup-java@v4
         with:
@@ -83,12 +83,16 @@ jobs:
       - name: CS3 eklentilerini dene
         working-directory: cs
         continue-on-error: true
-        run: timeout 2400 ./gradlew :diag:run --no-configuration-cache --args="$GITHUB_WORKSPACE/cs3 $GITHUB_WORKSPACE/jars $GITHUB_WORKSPACE/cs3-report.md" || true
+        run: |
+          set -o pipefail
+          timeout 2400 ./gradlew :diag:run --no-configuration-cache --stacktrace --args="$GITHUB_WORKSPACE/cs3 $GITHUB_WORKSPACE/jars $GITHUB_WORKSPACE/cs3-report.md" 2>&1 | tee ../cs3-full.log || true
+          tail -c 200000 ../cs3-full.log > ../cs3-console.log
 
       - name: Raporları diag-report dalına yaz
         if: always()
         run: |
-          mkdir -p report && cp -f *-report.md report/ 2>/dev/null || true
+          mkdir -p report && cp -f *-report.md *-console.log report/ 2>/dev/null || true
+          ls -la jars > report/jars.txt 2>&1 || true
           cd report
           git init -q && git checkout -q -b diag-report
           git config user.name "github-actions" && git config user.email "actions@github.com"

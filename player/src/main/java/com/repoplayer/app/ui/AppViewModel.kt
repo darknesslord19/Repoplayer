@@ -143,6 +143,17 @@ class AppViewModel : ViewModel() {
     init {
         loadHome()
         if (store.updateReposOnStart && repos.isNotEmpty()) refreshAllRepos(silent = true)
+        else migrateNuvioRepos()
+    }
+
+    /** Eski sürümde eklenmiş Nuvio repolarını yeni katalog yapısına yükseltir */
+    private fun migrateNuvioRepos() {
+        val old = store.repos.filter { r -> r.type == RepoType.NUVIO && r.sources.none { it.internalName.isNotBlank() } }
+        if (old.isEmpty()) return
+        viewModelScope.launch {
+            old.forEach { r -> runCatching { sources.refresh(r.url) }.onFailure { Logger.e("Repo", "Nuvio repo yükseltilemedi", it) } }
+            syncRepos()
+        }
     }
 
     fun toast(text: String) {
