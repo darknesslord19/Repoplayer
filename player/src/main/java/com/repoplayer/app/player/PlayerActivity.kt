@@ -75,6 +75,8 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var lockButton: ImageButton
     private lateinit var nextEpButton: TextView
     private var index = 0
+    /** Aynı bağlantı için kaçıncı başlık denemesi (tam / UA'sız / başlıksız) */
+    private var attempt = 0
     private var resizeIndex = 0
     private var locked = false
     private var ticks = 0
@@ -384,7 +386,7 @@ class PlayerActivity : ComponentActivity() {
         val names = req.links.mapIndexed { i, l -> (if (i == index) "▶ " else "") + listOfNotNull(l.quality, l.name).joinToString(" · ") }
         AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Kaynaklar (${req.links.size})")
-            .setItems(names.toTypedArray()) { _, i -> index = i; reload(keepPosition = true) }
+            .setItems(names.toTypedArray()) { _, i -> index = i; attempt = 0; reload(keepPosition = true) }
             .show()
     }
 
@@ -505,14 +507,29 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Bazı sunucular eklentinin verdiği başlıklarla (özellikle User-Agent) 403/404 döner.
+     * Sırayla: tam başlıklar → User-Agent'sız → başlıksız.
+     */
+    private fun headerVariants(h: Map<String, String>): List<Map<String, String>> {
+        val list = mutableListOf(h)
+        val noUa = h.filterKeys { !it.equals("user-agent", true) }
+        if (noUa.size != h.size) list += noUa
+        if (h.isNotEmpty() && noUa.isNotEmpty()) list += emptyMap()
+        return list
+    }
+
     private fun load(i: Int, position: Long, selectFirstSub: Boolean = false) {
         val p = player ?: return
-        val link = req.links[i]
+        val original = req.links[i]
+        val variants = headerVariants(original.headers)
+        val link = original.copy(headers = variants[attempt.coerceIn(0, variants.lastIndex)])
         titleView.text = req.title
         infoView.text = listOfNotNull(link.quality, link.name, "${i + 1}/${req.links.size}").joinToString(" · ")
         nextDismissed = false
 
-        val ua = link.headers.entries.firstOrNull { it.key.equals("user-agent", true) }?.value ?: DEFAULT_UA
+        val ua = link.headers.entries.firstOrNull { it.key.equals("user-agent", true) }?.value
+            ?: runCatching { com.lagradost.cloudstream3.USER_AGENT }.getOrDefault(DEFAULT_UA)
         // Ortak OkHttp istemcisi: bağlantı havuzu ve HTTP/2 ile daha hızlı açılış
         val http = OkHttpDataSource.Factory(Net.client)
             .setUserAgent(ua)
@@ -557,11 +574,19 @@ class PlayerActivity : ComponentActivity() {
 
     private fun onError(error: PlaybackException) {
         val msg = error.errorCodeName.removePrefix("ERROR_CODE_")
-        Logger.e("Player", "Kaynak ${index + 1} (${req.links[index].name}) açılamadı: $msg", error)
+        Logger.e("Player", "Kaynak ${index + 1} (${req.links[index].name}) deneme ${attempt + 1} açılamadı: $msg · ${req.links[index].url.take(120)}", error)
+        val pos = player?.currentPosition ?: 0L
+        // Önce aynı bağlantıyı farklı başlıklarla dene
+        if (attempt < headerVariants(req.links[index].headers).lastIndex) {
+            attempt++
+            Logger.i("Player", "Aynı kaynak farklı başlıklarla deneniyor (${attempt + 1})")
+            load(index, pos)
+            return
+        }
         if (store.autoNextSource && index < req.links.lastIndex) {
             toast("Kaynak açılamadı ($msg), sonrakine geçiliyor…")
-            val pos = player?.currentPosition ?: 0L
             index++
+            attempt = 0
             load(index, pos)
         } else {
             Toast.makeText(this, "Oynatılamadı: $msg. Kaynaklar'dan başka birini deneyin.", Toast.LENGTH_LONG).show()
