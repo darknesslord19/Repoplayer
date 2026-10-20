@@ -170,7 +170,12 @@ object JsEngine {
 
         @JavascriptInterface
         fun log(message: String) {
-            Log.d(TAG, message)
+            // Sağlayıcıların kendi mesajları (ör. "HTTP 451") Ayarlar > Geliştirici > Günlük'te görünür
+            if (message.contains("error", true) || message.contains("hata", true) || message.contains("HTTP 4") || message.contains("HTTP 5")) {
+                com.repoplayer.app.data.Logger.w("JS", message.take(400))
+            } else {
+                Log.d(TAG, message)
+            }
         }
     }
 }

@@ -128,7 +128,8 @@ private suspend fun testApi(api: MainAPI) {
     }
 }
 
-fun main(args: Array<String>) = runBlocking {
+fun main(args: Array<String>) {
+  runBlocking {
     val cs3Dir = File(args[0])
     val jarDir = File(args[1])
     val report = File(args[2])
@@ -160,5 +161,6 @@ fun main(args: Array<String>) = runBlocking {
         report.writeText(out.toString())
     }
     report.writeText(out.toString())
-    kotlin.system.exitProcess(0)
+  }
+  kotlin.system.exitProcess(0)
 }

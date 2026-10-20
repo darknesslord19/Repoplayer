@@ -5,6 +5,9 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.EventListener
+import coil3.request.ErrorResult
+import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.repoplayer.app.data.HomeCache
 import com.repoplayer.app.data.Logger
@@ -28,6 +31,12 @@ class App : Application(), SingletonImageLoader.Factory {
         Net.init(cacheDir, store.requestTimeoutSec, store.httpCache, store.dns)
         Net.configureCloudstream()
         HomeCache.init(cacheDir)
+        // Yeni sürümde önbellekteki eski afiş/başlık bilgileri kullanılmasın
+        val prefs = getSharedPreferences("repoplayer_meta", MODE_PRIVATE)
+        if (prefs.getString("last_version", null) != versionName) {
+            HomeCache.clear()
+            prefs.edit().putString("last_version", versionName).apply()
+        }
         sources = SourceManager(this, store)
         JsEngine.init(this)
         Logger.i("App", "RepoPlayer başlatıldı · ${store.repos.size} repo, ${sources.entries().size} kaynak, DNS: ${com.repoplayer.app.data.DNS_PROVIDERS.getOrNull(store.dns)?.first}")
@@ -38,6 +47,12 @@ class App : Application(), SingletonImageLoader.Factory {
         ImageLoader.Builder(context)
             .components { add(OkHttpNetworkFetcherFactory(callFactory = { Net.imageClient })) }
             .crossfade(true)
+            .eventListener(object : EventListener() {
+                private var logged = 0
+                override fun onError(request: ImageRequest, result: ErrorResult) {
+                    if (logged++ < 60) Logger.w("Görsel", "${request.data} → ${result.throwable.javaClass.simpleName}: ${result.throwable.message}")
+                }
+            })
             .build()
 
     val versionName: String

@@ -113,12 +113,13 @@ object Net {
             .build()
     }
 
-    /** Afiş yükleyici: tarayıcı kimliği ekler */
+    /** Afiş yükleyici: CloudStream'in kullandığı tarayıcı kimliğini ekler */
     val imageClient: OkHttpClient by lazy {
+        val ua = runCatching { com.lagradost.cloudstream3.USER_AGENT }.getOrDefault(DEFAULT_UA)
         client.newBuilder()
             .addInterceptor { chain ->
                 val r = chain.request()
-                chain.proceed(if (r.header("User-Agent") == null) r.newBuilder().header("User-Agent", DEFAULT_UA).build() else r)
+                chain.proceed(if (r.header("User-Agent") == null) r.newBuilder().header("User-Agent", ua).build() else r)
             }
             .build()
     }

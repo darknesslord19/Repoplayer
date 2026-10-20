@@ -220,8 +220,8 @@ class Cs3Source(override val entry: SourceEntry, private val apis: List<MainAPI>
         poster = posterUrl,
         kind = type.toKind(),
         extra = apiIndex.toString(),
-        posterHeaders = posterHeaders?.takeIf { it.isNotEmpty() }
-            ?: apis.getOrNull(apiIndex)?.mainUrl?.takeIf { it.startsWith("http") }?.let { mapOf("Referer" to it.trimEnd('/') + "/") },
+        // CloudStream ile aynı: yalnızca eklentinin istediği başlıklar (varsayılan Referer yok)
+        posterHeaders = posterHeaders?.takeIf { it.isNotEmpty() },
     )
 
     private fun api(item: ContentItem): MainAPI = apis.getOrNull(item.extra?.toIntOrNull() ?: 0) ?: apis.first()
