@@ -116,9 +116,9 @@ data class PluginStatus(
 /** .cs3 dosyalarını indirip CloudStream eklentisi olarak yükler */
 object Cs3Loader {
     private const val TAG = "Cs3Loader"
-    private val mutex = Mutex()
-    private val loaded = HashMap<String, List<MainAPI>>()
-    private val plugins = HashMap<String, BasePlugin>()
+    private val locks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+    private val loaded = java.util.concurrent.ConcurrentHashMap<String, List<MainAPI>>()
+    private val plugins = java.util.concurrent.ConcurrentHashMap<String, BasePlugin>()
     private val statuses = java.util.concurrent.ConcurrentHashMap<String, PluginStatus>()
 
     fun status(key: String): PluginStatus? = statuses[key]
@@ -130,7 +130,7 @@ object Cs3Loader {
 
     fun pluginsDir(context: Context) = File(context.filesDir, "plugins")
 
-    suspend fun load(context: Context, entry: SourceEntry): List<MainAPI> = mutex.withLock {
+    suspend fun load(context: Context, entry: SourceEntry): List<MainAPI> = locks.getOrPut(entry.key) { Mutex() }.withLock {
         loaded[entry.key]?.let { return it }
         statuses[entry.key] = PluginStatus(PluginStatus.State.LOADING)
         try {
@@ -162,6 +162,10 @@ object Cs3Loader {
             )
             Logger.i(TAG, "${entry.name} yüklendi: ${apis.joinToString { it.name }}")
             apis
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            // Kullanıcı başka kaynağa geçti; hata değil
+            statuses.remove(entry.key)
+            throw c
         } catch (t: Throwable) {
             statuses[entry.key] = PluginStatus(PluginStatus.State.FAILED, t.message ?: t.javaClass.simpleName)
             Logger.e(TAG, "${entry.name} yüklenemedi", t)

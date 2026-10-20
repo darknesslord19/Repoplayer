@@ -20,8 +20,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 class SourceManager(private val context: Context, val store: Store) {
-    private val cache = HashMap<String, ContentSource>()
-    private val lock = Mutex()
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, ContentSource>()
+    /** Kaynak başına kilit: bir eklenti inerken diğerleri beklemez */
+    private val locks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+    private fun lockFor(key: String) = locks.getOrPut(key) { Mutex() }
 
     fun entries(): List<SourceEntry> = store.repos.flatMap { it.sources }
 
@@ -66,7 +68,7 @@ class SourceManager(private val context: Context, val store: Store) {
     suspend fun refresh(url: String): RepoEntry {
         val repo = resolve(url)
         store.repos = store.repos.map { if (it.url == url) repo else it }
-        lock.withLock { cache.keys.filter { k -> repo.sources.any { it.key == k } }.forEach { cache.remove(it) } }
+        cache.keys.filter { k -> repo.sources.any { it.key == k } }.forEach { cache.remove(it) }
         return repo
     }
 
@@ -74,7 +76,7 @@ class SourceManager(private val context: Context, val store: Store) {
         store.repos = store.repos.filterNot { it.url == url }
     }
 
-    suspend fun open(entry: SourceEntry): ContentSource = lock.withLock {
+    suspend fun open(entry: SourceEntry): ContentSource = cache[entry.key] ?: lockFor(entry.key).withLock {
         cache[entry.key] ?: when (entry.type) {
             RepoType.CS3 -> Cs3Source(entry, Cs3Loader.load(context, entry))
             RepoType.NUVIO -> if (entry.internalName.isNotBlank()) NuvioCatalogSource(entry, store, context) else NuvioSource(entry, store, context)

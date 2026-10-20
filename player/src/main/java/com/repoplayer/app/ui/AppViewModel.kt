@@ -212,6 +212,7 @@ class AppViewModel : ViewModel() {
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
+                if (generateSequence(t) { it.cause }.any { it is CancellationException }) return@launch
                 Logger.e("Home", "${entry.name} ana sayfası", t)
                 if (rows.isEmpty()) homeError = t.message ?: t.javaClass.simpleName
                 else toast("Yenilenemedi, önbellek gösteriliyor: ${t.message}")

@@ -27,6 +27,8 @@ class App : Application(), SingletonImageLoader.Factory {
         instance = this
         // CloudStream kütüphanesi bazı çıkarıcılar (WebView vb.) için bağlam ister
         com.lagradost.api.setContext(this)
+        // Eklentilerin ayar/alan adı saklamak için kullandığı CloudStreamApp.context
+        com.lagradost.cloudstream3.CloudStreamApp.context = this
         // CloudStream gibi: modern TLS (Conscrypt) — eski cihazlarda ve bazı CDN'lerde bağlantı sorunlarını giderir
         runCatching { java.security.Security.insertProviderAt(org.conscrypt.Conscrypt.newProvider(), 1) }
         store = Store(this)
