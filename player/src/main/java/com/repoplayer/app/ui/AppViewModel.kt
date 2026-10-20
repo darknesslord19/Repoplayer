@@ -546,6 +546,32 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    // ---------- Kaynak testi ----------
+    val testOutput = mutableStateListOf<String>()
+    var testRunning by mutableStateOf(false)
+        private set
+    var testTarget by mutableStateOf<SourceEntry?>(null)
+    private var testJob: Job? = null
+
+    fun runSourceTest(entry: SourceEntry) {
+        testJob?.cancel()
+        testTarget = entry
+        testOutput.clear()
+        testRunning = true
+        testJob = viewModelScope.launch {
+            try {
+                com.repoplayer.app.source.SourceTest(sources) { line -> main.post { testOutput.add(line) } }.run(entry)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                main.post { testOutput.add("✗ Test hatası: ${t.message}") }
+            } finally {
+                delay(200)
+                testRunning = false
+            }
+        }
+    }
+
     fun toggleSourceHidden(key: String) = updatePrefs {
         hiddenSources = if (key in hiddenSources) hiddenSources - key else hiddenSources + key
     }

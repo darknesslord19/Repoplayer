@@ -260,7 +260,12 @@ class Cs3Source(override val entry: SourceEntry, private val apis: List<MainAPI>
                             val key = if (res.hasNext || page.data.isNotBlank())
                                 listOf(apiIndex.toString(), page.name, page.data, page.horizontalImages.toString(), list.name)
                                     .joinToString(SEP) else null
-                            send(list.toRow(apiIndex, key, myOrder + i))
+                            val row = list.toRow(apiIndex, key, myOrder + i)
+                            val withPoster = row.items.count { !it.poster.isNullOrBlank() }
+                            if (withPoster < row.items.size) {
+                                Logger.w(TAG, "${entry.name} \"${row.title}\": ${row.items.size} içerikten ${row.items.size - withPoster} tanesinde afiş adresi yok")
+                            }
+                            send(row)
                             sent.incrementAndGet()
                         }
                     }

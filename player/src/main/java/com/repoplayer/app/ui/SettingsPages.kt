@@ -72,6 +72,7 @@ fun SettingsPageView(vm: AppViewModel, page: SettingsPage) {
         "badges" -> BadgesPage(vm)
         "dev" -> DevPage(vm)
         "log" -> LogPage(vm)
+        "test" -> TestPage(vm)
         "general" -> GeneralPage(vm)
         "player" -> PlayerPage(vm)
         "providers" -> ProvidersPage(vm)
@@ -194,6 +195,11 @@ private fun DevPage(vm: AppViewModel) {
         }
         item {
             SettingsCard {
+                NavRow(R.drawable.ic_bolt, "Kaynak testi", "Seçili kaynağı uçtan uca dener: ana sayfa, afiş, bağlantı, oynatma", {
+                    vm.selected?.let { vm.runSourceTest(it) }
+                    vm.openSettings("test")
+                })
+                CardDivider()
                 NavRow(R.drawable.ic_code, "Günlük kayıtları", "Eklenti yükleme ve oynatma hataları", { vm.openSettings("log") })
                 CardDivider()
                 NavRow(R.drawable.ic_globe, "GitHub sayfası", AppViewModel.GITHUB_REPO, { openUrl(context, "https://github.com/${AppViewModel.GITHUB_REPO}") })
@@ -682,8 +688,9 @@ private fun SourceRow(
             Text("Aç", color = Accent, fontWeight = FontWeight.Bold)
         }
         Row(Modifier.padding(start = 16.dp, end = 12.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            SmallAction("Tam test") { vm.runSourceTest(e); vm.openSettings("test") }
             if (e.type == RepoType.CS3) {
-                SmallAction(if (testing) "Yükleniyor…" else "Yükle / test et", onTest)
+                SmallAction(if (testing) "Yükleniyor…" else "Yükle", onTest)
                 if (status?.hasSettings == true) SmallAction("Eklenti ayarları", onSettings)
             }
             SmallAction(if (hidden) "Göster" else "Gizle") { vm.toggleSourceHidden(e.key) }
@@ -705,3 +712,47 @@ private fun SmallAction(text: String, onClick: () -> Unit) {
 @Suppress("unused")
 @Composable
 private fun SwitchIcon(on: Boolean) = Switch(checked = on, onCheckedChange = null, colors = SwitchDefaults.colors(checkedTrackColor = Accent))
+
+
+@Composable
+private fun TestPage(vm: AppViewModel) {
+    val context = LocalContext.current
+    SubPage(vm, "Kaynak testi") {
+        item {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                Text(
+                    (vm.testTarget?.name ?: vm.selected?.name ?: "Kaynak yok") + if (vm.testRunning) " · test sürüyor…" else "",
+                    color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Ana sayfa, afişler, detay ve bağlantılar sırayla denenir. Bitince \"Kopyala\" ile sonucu paylaşabilirsin.",
+                    color = TextDim, fontSize = 12.sp,
+                )
+                Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(
+                        onClick = { (vm.testTarget ?: vm.selected)?.let { vm.runSourceTest(it) } },
+                        enabled = !vm.testRunning,
+                        modifier = Modifier.focusFrame(RoundedCornerShape(50)),
+                    ) { Text("Yeniden test et", color = Accent) }
+                    OutlinedButton(onClick = {
+                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                            .setPrimaryClip(ClipData.newPlainText("RepoPlayer test", vm.testOutput.joinToString("\n")))
+                        vm.toast("Test sonucu panoya kopyalandı")
+                    }, modifier = Modifier.focusFrame(RoundedCornerShape(50))) { Text("Kopyala", color = Accent) }
+                    if (vm.testRunning) CircularProgressIndicator(Modifier.size(20.dp), color = Accent, strokeWidth = 2.dp)
+                }
+            }
+        }
+        items(vm.testOutput) { l ->
+            val c = when {
+                l.startsWith("✗") || l.contains("HATA") -> Color(0xFFFF7A7A)
+                l.startsWith("✓") -> Accent
+                else -> Color(0xFFB8C0CC)
+            }
+            Text(
+                l, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp).focusFrame(RoundedCornerShape(6.dp)).clickable { },
+                color = c, fontSize = 12.sp, fontFamily = FontFamily.Monospace, lineHeight = 16.sp,
+            )
+        }
+    }
+}
