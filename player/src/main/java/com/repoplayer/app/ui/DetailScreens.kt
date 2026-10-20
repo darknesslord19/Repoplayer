@@ -90,10 +90,10 @@ private fun DetailContent(vm: AppViewModel, state: DetailState, d: Details) {
         item {
             Box(Modifier.fillMaxWidth().height(230.dp)) {
                 val bg = d.backdrop ?: d.poster
-                if (bg != null) AsyncImage(model = bg, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                RemoteImage(bg, d.item.posterHeaders, Modifier.fillMaxSize())
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0x33000000), Bg))))
                 Row(Modifier.align(Alignment.BottomStart).padding(16.dp), verticalAlignment = Alignment.Bottom) {
-                    Poster(d.poster, d.title, Modifier.width(100.dp).aspectRatio(2f / 3f))
+                    Poster(d.poster, d.title, Modifier.width(100.dp).aspectRatio(2f / 3f), d.item.posterHeaders)
                     Column(Modifier.padding(start = 14.dp)) {
                         Text(d.title, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
                         val meta = listOfNotNull(d.year?.toString(), if (d.isSeries) "${d.episodes.size} bölüm" else null).joinToString(" · ")
@@ -164,8 +164,8 @@ private fun DetailContent(vm: AppViewModel, state: DetailState, d: Details) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(Modifier.width(120.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Surface2)) {
-                    if (ep.poster != null) AsyncImage(model = ep.poster, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                    else Text("${ep.episode ?: ""}", Modifier.align(Alignment.Center), color = TextDim, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    if (ep.poster == null) Text("${ep.episode ?: ""}", Modifier.align(Alignment.Center), color = TextDim, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    else RemoteImage(ep.poster, d.item.posterHeaders, Modifier.fillMaxSize())
                     if (rec != null) LinearProgressIndicator(progress = { rec.progress }, modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp), color = Accent, trackColor = Color(0x66000000))
                 }
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
@@ -215,7 +215,19 @@ fun LinksSheet(vm: AppViewModel, state: LinksState) {
                 ) { Text("En iyi kaynağı oynat", color = Color.Black) }
             }
             if (!state.loading && state.error != null && state.links.isEmpty()) {
-                Text(state.error!!, Modifier.padding(20.dp), color = TextDim)
+                Text(state.error!!, Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp), color = TextDim)
+                Text(
+                    "Eklenti siteye veya video sunucusuna ulaşamamış olabilir. Ayarlar > Genel > DNS'i değiştirmeyi dene.",
+                    Modifier.padding(horizontal = 20.dp, vertical = 6.dp), color = TextDim, fontSize = 12.sp,
+                )
+                Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    androidx.compose.material3.TextButton(onClick = { vm.closeLinks(); vm.stack.clear(); vm.tab = 3; vm.settingsStack.clear(); vm.openSettings("general") }, modifier = Modifier.focusFrame(RoundedCornerShape(50))) {
+                        Text("DNS ayarı", color = Accent)
+                    }
+                    androidx.compose.material3.TextButton(onClick = { vm.closeLinks(); vm.stack.clear(); vm.tab = 3; vm.settingsStack.clear(); vm.openSettings("dev"); vm.openSettings("log") }, modifier = Modifier.focusFrame(RoundedCornerShape(50))) {
+                        Text("Günlüğü aç", color = Accent)
+                    }
+                }
             }
             val listState = rememberLazyListState()
             LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {

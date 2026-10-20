@@ -260,6 +260,30 @@ private fun GeneralPage(vm: AppViewModel) = SubPage(vm, "Genel") {
             SwitchRow("Açılışta repoları güncelle", "Yeni eklenti sürümlerini otomatik getirir", upd) { upd = it; s.updateReposOnStart = it }
         }
     }
+    item { SectionLabel("İSS kısıtlamaları") }
+    item {
+        val context = LocalContext.current
+        val initial = remember { s.dns }
+        var dns by remember { mutableStateOf(s.dns) }
+        SettingsCard {
+            ChoiceRow(
+                "DNS (DNS-over-HTTPS)",
+                "Site veya video açılmıyor, afişler gelmiyorsa operatör engelini aşmak için DNS seç. Eklentiler, oynatıcı ve afişler bu DNS'i kullanır.",
+                com.repoplayer.app.data.DNS_PROVIDERS.map { it.first }, dns,
+            ) { dns = it; s.dns = it }
+            if (dns != initial) {
+                CardDivider()
+                NavRow(R.drawable.ic_refresh, "Uygulamayı yeniden başlat", "DNS değişikliği yeniden başlatınca etkinleşir", { restartApp(context) })
+            }
+        }
+    }
+}
+
+fun restartApp(context: Context) {
+    val intent = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+    context.startActivity(intent)
+    Runtime.getRuntime().exit(0)
 }
 
 // ===================== Oynatıcı =====================
@@ -391,6 +415,8 @@ private fun PerformancePage(vm: AppViewModel) {
                 CardDivider()
                 var http by remember { mutableStateOf(s.httpCache) }
                 SwitchRow("HTTP önbelleği (50 MB)", "Tekrarlanan istekleri hızlandırır · yeniden başlatınca etkin", http) { http = it; s.httpCache = it }
+                CardDivider()
+                NavRow(R.drawable.ic_globe, "DNS ve İSS kısıtlamaları", "Şu an: ${com.repoplayer.app.data.DNS_PROVIDERS.getOrNull(s.dns)?.first}", { vm.openSettings("general") })
                 CardDivider()
                 var par by remember { mutableStateOf(s.parallelRequests) }
                 SliderRow("Paralel istek sayısı", par, 1..12, 1, { "$it" }) { par = it; s.parallelRequests = it }

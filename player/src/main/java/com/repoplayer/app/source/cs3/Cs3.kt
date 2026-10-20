@@ -220,6 +220,8 @@ class Cs3Source(override val entry: SourceEntry, private val apis: List<MainAPI>
         poster = posterUrl,
         kind = type.toKind(),
         extra = apiIndex.toString(),
+        posterHeaders = posterHeaders?.takeIf { it.isNotEmpty() }
+            ?: apis.getOrNull(apiIndex)?.mainUrl?.takeIf { it.startsWith("http") }?.let { mapOf("Referer" to it.trimEnd('/') + "/") },
     )
 
     private fun api(item: ContentItem): MainAPI = apis.getOrNull(item.extra?.toIntOrNull() ?: 0) ?: apis.first()
@@ -334,7 +336,7 @@ class Cs3Source(override val entry: SourceEntry, private val apis: List<MainAPI>
 
         val imdb = res.syncData.values.firstNotNullOfOrNull { Regex("tt\\d{5,}").find(it)?.value }
         Details(
-            item = item.copy(poster = item.poster ?: res.posterUrl, kind = res.type.toKind()),
+            item = item.copy(poster = item.poster ?: res.posterUrl, kind = res.type.toKind(), posterHeaders = res.posterHeaders?.takeIf { it.isNotEmpty() } ?: item.posterHeaders),
             title = res.name,
             poster = res.posterUrl ?: item.poster,
             backdrop = res.backgroundPosterUrl,
@@ -355,8 +357,12 @@ class Cs3Source(override val entry: SourceEntry, private val apis: List<MainAPI>
         onSubtitle: (Subtitle) -> Unit,
     ) {
         val data = episode?.id ?: details.playId ?: return
+        val started = System.currentTimeMillis()
+        var count = 0
         withContext(Dispatchers.IO) {
-            api(details.item).loadLinks(
+            val api = api(details.item)
+            Logger.i(TAG, "${api.name}: bağlantılar aranıyor → $data")
+            val ok = api.loadLinks(
                 data,
                 false,
                 { sub -> onSubtitle(Subtitle(sub.lang, sub.url, sub.headers ?: emptyMap())) },
@@ -367,7 +373,9 @@ class Cs3Source(override val entry: SourceEntry, private val apis: List<MainAPI>
                         "VIDEO" -> StreamType.PROGRESSIVE
                         else -> null // torrent/magnet desteklenmiyor
                     }
+                    if (type == null) Logger.w(TAG, "Desteklenmeyen bağlantı türü (${link.type.name}): ${link.name}")
                     if (type != null) {
+                        count++
                         onLink(
                             StreamLink(
                                 name = link.name,
@@ -380,6 +388,9 @@ class Cs3Source(override val entry: SourceEntry, private val apis: List<MainAPI>
                     }
                 },
             )
+            val secs = (System.currentTimeMillis() - started) / 1000
+            if (count == 0) Logger.w(TAG, "${api.name}: bağlantı bulunamadı (loadLinks=$ok, ${secs} sn). Site/video sunucusu erişilemiyor olabilir; Ayarlar > Genel > DNS'i değiştirmeyi deneyin.")
+            else Logger.i(TAG, "${api.name}: $count bağlantı (${secs} sn)")
         }
     }
 

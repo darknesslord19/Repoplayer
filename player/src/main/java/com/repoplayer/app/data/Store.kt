@@ -51,6 +51,11 @@ class Store(context: Context) {
         get() = str("language", "tr-TR")
         set(v) = setStr("language", v)
 
+    /** DNS-over-HTTPS: 0 sistem, 1 Cloudflare, 2 Google, 3 AdGuard, 4 Quad9 */
+    var dns: Int
+        get() = int("dns", 1)
+        set(v) = setInt("dns", v)
+
     var startTab: Int
         get() = int("start_tab", 0)
         set(v) = setInt("start_tab", v)

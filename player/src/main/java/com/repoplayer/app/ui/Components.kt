@@ -44,6 +44,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
+import coil3.request.ImageRequest
 import com.repoplayer.app.data.ContentItem
 import com.repoplayer.app.data.Row as ContentRow
 
@@ -94,17 +98,29 @@ val LocalRail = compositionLocalOf { false }
 
 fun posterWidth(size: Int?): Dp = when (size) { 0 -> 96.dp; 2 -> 150.dp; else -> 120.dp }
 
+/** Afiş/arka plan görseli; eklentinin istediği başlıklarla (Referer vb.) yüklenir */
 @Composable
-fun Poster(url: String?, title: String, modifier: Modifier = Modifier) {
+fun RemoteImage(url: String?, headers: Map<String, String>?, modifier: Modifier = Modifier, contentDescription: String? = null) {
+    val ctx = LocalPlatformContext.current
+    val model = remember(url, headers) {
+        if (url.isNullOrBlank()) null
+        else ImageRequest.Builder(ctx).data(url).apply {
+            if (!headers.isNullOrEmpty()) {
+                httpHeaders(NetworkHeaders.Builder().apply { headers.forEach { (k, v) -> set(k, v) } }.build())
+            }
+        }.build()
+    }
+    if (model != null) AsyncImage(model = model, contentDescription = contentDescription, contentScale = ContentScale.Crop, modifier = modifier)
+}
+
+@Composable
+fun Poster(url: String?, title: String, modifier: Modifier = Modifier, headers: Map<String, String>? = null) {
     Box(modifier.clip(RoundedCornerShape(12.dp)).background(Surface2)) {
-        if (url.isNullOrBlank()) {
-            Text(
-                title, Modifier.align(Alignment.Center).padding(8.dp),
-                color = TextDim, fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 4,
-            )
-        } else {
-            AsyncImage(model = url, contentDescription = title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        }
+        Text(
+            title, Modifier.align(Alignment.Center).padding(8.dp),
+            color = TextDim, fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 4,
+        )
+        RemoteImage(url, headers, Modifier.fillMaxSize(), title)
     }
 }
 
@@ -128,7 +144,7 @@ fun PosterCard(
         val ui = LocalUi.current
         val watched = ui?.badgeWatched != false && "${item.sourceKey}|${item.id}" in LocalWatched.current
         Box {
-            Poster(item.poster, item.title, Modifier.fillMaxWidth().aspectRatio(if (horizontal) 16f / 9f else 2f / 3f))
+            Poster(item.poster, item.title, Modifier.fillMaxWidth().aspectRatio(if (horizontal) 16f / 9f else 2f / 3f), item.posterHeaders)
             if (watched) {
                 Box(Modifier.align(Alignment.TopEnd).padding(6.dp).clip(RoundedCornerShape(50)).background(Accent).padding(horizontal = 6.dp, vertical = 1.dp)) {
                     Text("✓", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)

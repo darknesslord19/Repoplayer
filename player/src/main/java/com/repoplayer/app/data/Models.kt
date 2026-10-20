@@ -37,6 +37,8 @@ data class ContentItem(
     val year: Int? = null,
     /** CS3'te hangi MainAPI'ye ait olduğu, Stremio'da tür ("movie"/"series") */
     val extra: String? = null,
+    /** Afiş isteği için gereken başlıklar (Referer vb.) */
+    val posterHeaders: Map<String, String>? = null,
 )
 
 data class Row(

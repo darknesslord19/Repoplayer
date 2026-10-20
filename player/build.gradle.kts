@@ -75,6 +75,7 @@ tasks.withType<KotlinJvmCompile>().configureEach {
             "com.lagradost.cloudstream3.InternalAPI",
             "com.lagradost.cloudstream3.Prerelease",
             "androidx.compose.material3.ExperimentalMaterial3Api",
+            "com.lagradost.cloudstream3.UnsafeSSL",
         )
     }
 }
@@ -107,4 +108,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:${libs.versions.kotlinxCoroutines.get()}")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Eklentilerin ağ istemcisi (app.baseClient) ve DNS-over-HTTPS
+    implementation(libs.nicehttp)
+    implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
 }
